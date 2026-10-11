@@ -1,0 +1,14 @@
+[project]
+name = "forage"
+version = "0.0.1"
+description = "Proactive restaurant-exploration agent. Pre-design: brief, open questions, policy simulation."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
