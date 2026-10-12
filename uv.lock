@@ -12,7 +12,7 @@ wheels = [
 ]
 
 [[package]]
-name = "forage"
+name = "nosh"
 version = "0.0.1"
 source = { virtual = "." }
 

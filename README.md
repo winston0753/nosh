@@ -1,10 +1,19 @@
-# Forage
+# Nosh
 
 *Working name.* A proactive restaurant-exploration app: at lunch and dinner it suggests a nearby restaurant you haven't tried, in a cuisine you're likely to say yes to, and hands off to directions or ordering. Goal: try as many good neighborhood restaurants as possible.
 
-**Status: pre-design.** This repo currently holds the product pressure test and one validation spike. No app code yet.
+**Status: preliminary design.** The product and architecture baseline is defined; implementation of the first vertical slice has not started.
 
-## Read first
+## Canonical documents
+
+1. [PRODUCT.md](PRODUCT.md) — product requirements, MVP scope, success metrics, edge cases, and non-goals
+2. [ARCHITECTURE.md](ARCHITECTURE.md) — system design, stack, database, APIs, deployment, and security
+3. [RECOMMENDATIONS.md](RECOMMENDATIONS.md) — eligibility, ranking, personalization, feedback semantics, and evaluation
+4. [DECISIONS.md](DECISIONS.md) — accepted decisions, rejected alternatives, consequences, and deferrals
+5. [notes.md](notes.md) — chronological record of material project work
+6. [IMPLEMENTATION_HANDOFF.md](IMPLEMENTATION_HANDOFF.md) — implementation sequence and constraints for Claude
+
+## Background research
 
 1. [docs/01-product-brief.md](docs/01-product-brief.md) — what works, what doesn't, fixes, where AI is load-bearing, phased scope
 2. [docs/02-open-questions.md](docs/02-open-questions.md) — questions to settle before design
@@ -39,4 +48,4 @@ spike/                throwaway experiments that answer one question each
 tests/                pytest; policy invariants and simulator sanity checks
 ```
 
-Planned once design starts: `api/` (FastAPI), `ingest/` (places pipeline), `agent/`, `evals/`, `ios/`.
+Planned phase-one structure is documented in [ARCHITECTURE.md](ARCHITECTURE.md). The existing `docs/` directory and `spike/` remain supporting research and validation history.

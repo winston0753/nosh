@@ -1,6 +1,6 @@
-# Forage — product brief and pressure test (v0, pre-design)
+# Nosh — product brief and pressure test (v0, pre-design)
 
-*Status: pre-design. "Forage" is a working name.*
+*Historical pre-design brief. The product was subsequently named Nosh.*
 
 ## TL;DR
 

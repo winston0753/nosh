@@ -1,5 +1,5 @@
 [project]
-name = "forage"
+name = "nosh"
 version = "0.0.1"
 description = "Proactive restaurant-exploration agent. Pre-design: brief, open questions, policy simulation."
 readme = "README.md"

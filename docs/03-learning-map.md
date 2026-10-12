@@ -1,6 +1,6 @@
 # Learning map
 
-What each part of Forage teaches, and how it lines up with the build sequence on your AI-engineering roadmap.
+What each part of Nosh teaches, and how it lines up with the build sequence on your AI-engineering roadmap.
 
 ## Product development
 
@@ -28,7 +28,7 @@ What each part of Forage teaches, and how it lines up with the build sequence on
 
 ## Agentic systems and RAG — roadmap build sequence
 
-| Roadmap step | Forage version |
+| Roadmap step | Nosh version |
 |---|---|
 | 1. Agent loop from raw API calls, no framework | Concierge agent with tools: `search_places`, `get_history`, `log_meal`, `free_slots(calendar)`. Hand-roll the loop, retries, and tool-error handling |
 | 2. MCP server for a tool you use | Expose your food history + restaurant universe as an MCP server; ask Claude "where haven't I been near the office that's open now?" |
