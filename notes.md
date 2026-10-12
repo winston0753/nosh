@@ -89,3 +89,9 @@ The handoff directs Claude to begin with a reviewable backend-foundation pull re
 ### GitHub readiness
 
 Added a minimal GitHub Actions workflow that verifies the lockfile, installs the locked development dependencies, and runs the Python test suite on pushes to `main` and pull requests. Added a pull-request template that requires verification, privacy checks, canonical-document consistency, and phase-one scope discipline.
+
+## 2026-10-12 — GitHub connection and Claude brief
+
+Added `CLAUDE.md` as the concise, automatically discoverable implementation brief. It directs Claude to read the canonical product and architecture documents, begin with the backend-foundation milestone, preserve the simulator, enforce phase-one constraints, and meet a concrete first-pull-request checklist.
+
+Configured the repository for the provided GitHub destination `https://github.com/winston0753/nosh.git`. The remote was empty when checked, so the local `main` history was safe to publish without reconciling unrelated commits.

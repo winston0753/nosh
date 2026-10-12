@@ -12,6 +12,7 @@
 4. [DECISIONS.md](DECISIONS.md) — accepted decisions, rejected alternatives, consequences, and deferrals
 5. [notes.md](notes.md) — chronological record of material project work
 6. [IMPLEMENTATION_HANDOFF.md](IMPLEMENTATION_HANDOFF.md) — implementation sequence and constraints for Claude
+7. [CLAUDE.md](CLAUDE.md) — concise, automatically discoverable implementation brief
 
 ## Background research
 
