@@ -76,7 +76,7 @@ Created `DECISIONS.md` and recorded the accepted baseline decisions:
 
 ### Repository preparation
 
-The original directory was already a Git repository on branch `main`, with one existing commit and no configured remote. Product content and package metadata were renamed from Forage to Nosh. The local folder rename is tracked as the final repository-preparation step. The new root documents make the product and technical baseline explicit and are intended to be committed before connecting the repository to GitHub.
+The original directory was already a Git repository on branch `main`, with one existing commit and no configured remote. Product content, package metadata, and the local repository directory were renamed from Forage to Nosh. The new root documents make the product and technical baseline explicit and were committed before connecting the repository to GitHub.
 
 The repository can be linked after an empty GitHub repository is created by adding its URL as `origin` and pushing `main`. No remote URL or GitHub credentials were available during this work, so no external repository was created or linked automatically.
 
