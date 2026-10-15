@@ -14,9 +14,9 @@ jobs:
     name: Spike tests (root)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -63,9 +63,9 @@ jobs:
         working-directory: services/api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -117,9 +117,9 @@ jobs:
         working-directory: apps/mobile
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
