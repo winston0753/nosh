@@ -74,7 +74,7 @@ Phase one does not require microservices, a message broker, a separate vector da
 - Supabase-hosted PostgreSQL in shared development and production environments
 - Local PostgreSQL in Docker Compose
 - PostGIS geography points and GiST indexes for radius queries
-- pgvector enabled but not used until craving retrieval has a defined evaluation set
+- pgvector deferred (see DECISIONS.md D013); not installed in the postgis/postgis image
 
 ### Operations
 
@@ -282,6 +282,15 @@ Create a GiST index on `location`. Do not include precise coordinates in applica
 - `response`: `go`, `another`, or `not_today`
 - `client_event_id` unique
 - `responded_at`
+- unique constraint on `proposal_id` (one response per proposal)
+
+Response writes lock the owning suggestion-session row before reading the stored response or session state, so concurrent responders are serialised:
+
+- identical retry (same proposal and action) → the stored response is returned;
+- a different action on an already-answered proposal, including the loser of a concurrent race → `409 conflict`, never `422 invalid_state_transition`;
+- a reused `client_event_id` for another proposal or action → `409 conflict`; for another user → `403 forbidden`;
+- `422 invalid_state_transition` is reserved for unanswered proposals in a closed session;
+- integrity errors from any other constraint propagate unchanged.
 
 ### `visits`
 
@@ -379,11 +388,19 @@ State transitions are validated by the server. Duplicate requests return the alr
 ## 10. Authentication and authorization
 
 - Supabase Auth provides passwordless email authentication.
-- The mobile app obtains a user access token.
-- FastAPI verifies token signature, issuer, audience, and expiry.
-- The service role credential is available only to the backend.
+- The mobile app obtains a user access token (Supabase JWT).
+- FastAPI validates: signature (HS256 with SUPABASE_JWT_SECRET or RS256/ES256 via JWKS),
+  expiry, issuer ({SUPABASE_URL}/auth/v1), audience (authenticated), role (authenticated),
+  and UUID subject.  SUPABASE_URL is required in production mode.
+- Local/test environments use a UUID-bypass adapter (AUTH_LOCAL_DEV=true) restricted to
+  loopback database hosts; guarded by APP_ENVIRONMENT.
+- The Supabase Data API is blocked at the database level (migration 0002 revokes all
+  privileges from anon and authenticated roles; see DECISIONS.md D014).
+- FastAPI connects as the postgres superuser (local Docker) or Supabase service-role (production).
 - The mobile app does not directly write product tables.
 - Database row-level security is defense in depth, not a substitute for API authorization.
+- Full identity deletion (Supabase Auth user) requires a service-role credential and is not
+  yet implemented.  The DELETE /v1/me/product-data endpoint removes product data only.
 
 ## 11. Notifications
 

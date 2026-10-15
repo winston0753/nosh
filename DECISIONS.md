@@ -225,3 +225,58 @@ Package the FastAPI application as a standard container and select the shared ho
 ### Consequences
 
 No vendor-specific runtime service may become a core application dependency during the initial build.
+
+## D013 — Defer pgvector to a future phase
+
+- **Status:** Accepted
+- **Date:** 2026-10-12
+
+### Decision
+
+Remove `CREATE EXTENSION vector` from the phase-one migration and local initialization. The `postgis/postgis` Docker image does not include pgvector, and the feature (embedding-based craving retrieval) has no defined evaluation set in phase one.
+
+### Alternatives rejected
+
+- **Install pgvector in the Docker image now:** requires building a custom image or using a different base image, adding operational complexity for a feature with no current use.
+- **Add a combined postgis+pgvector image:** `pgvector/pgvector:pg16` does not include PostGIS; a custom Dockerfile is needed. Defer until an embedding feature has a concrete plan.
+
+### Consequences
+
+The extension can be added in a single migration when the first embedding feature is scoped. The `ARCHITECTURE.md` note "pgvector installed but not used" is revised to "pgvector deferred." The schema is otherwise unchanged.
+
+## D014 — Revoke Supabase Data API access from product tables
+
+- **Status:** Accepted
+- **Date:** 2026-10-12
+
+### Decision
+
+Keep product tables in the `public` schema but revoke all privileges from the `anon` and `authenticated` Supabase roles.  Set default privileges so future tables are not auto-granted.  FastAPI connects with the postgres superuser or a dedicated service-role credential and retains full access.  PostgREST (the Supabase Data API) is blocked from reading or writing any product table directly.
+
+### Alternatives rejected
+
+- **Private schema:** Requires renaming the schema in all SQLAlchemy models and Alembic migrations.  Effective but significantly more disruptive than a one-migration REVOKE.
+- **Row-Level Security only:** RLS adds policy complexity and is described in ARCHITECTURE.md as defense in depth, not the primary access control layer.
+- **No action:** Any PostgREST client with the `anon` key could read all product tables without authentication.
+
+### Consequences
+
+Migration 0002 implements the REVOKE.  The DO blocks guard against the Supabase roles not existing in a plain local PostgreSQL instance.  Downgrade restores the default Supabase grants explicitly.
+
+## D015 — Manual visits may omit a proposal
+
+- **Status:** Accepted
+- **Date:** 2026-10-12
+
+### Decision
+
+The `POST /v1/visits` endpoint accepts `proposal_id=null` for visits the user logs independently of a Nosh suggestion.  When `proposal_id` is provided, the service validates that the proposal exists, belongs to the user, and its session is in state `accepted`.
+
+### Alternatives rejected
+
+- **Require a proposal for every visit:** Prevents the user from logging visits to restaurants they found through other channels.  Reduces utility and creates a false impression that Nosh is the only discovery path.
+- **Allow any session state:** Would let users confirm visits that were never accepted via Go, undermining the Go-is-intent principle.
+
+### Consequences
+
+Manual visits count toward visit history and can affect the North Star metric, but they do not influence cuisine preference state (no Beta update) because there is no proposal to link them to a cuisine selection event.  The progress metric already correctly handles this by checking only the confirmed-positive count.

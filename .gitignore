@@ -1,8 +1,31 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .venv/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Environment files — ignore all variants, keep only .example templates
 .env
 .env.*
+!.env.example
+!**/.env.example
+
 *.sqlite
 .DS_Store
+
+# Node / JavaScript — ignore everywhere, not just inside apps/mobile/
+node_modules/
+.expo/
+dist/
+.next/
+.nuxt/
+
+# Build artifacts
+build/
+
+# Claude Code agent-local memory — not for public repository
+memory/
