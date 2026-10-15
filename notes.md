@@ -1,5 +1,181 @@
 # Project Notes
 
+## 2026-10-13 — Milestone status correction
+
+The earlier corrective pass overstated progress by naming Milestone 4 as next. Corrected status: Milestones 1–2 complete; Milestone 3 partially complete (local vertical slice implemented; Supabase passwordless auth, location/radius/day selection, offline suggestion persistence, queued idempotent writes, EAS/TestFlight build, and real icons remain); Milestone 4 not started and not next. The checkpoint stays **Milestone 0.1 — Working Local Foundation**: suitable for source control, not for TestFlight or external testers. Mobile `npm audit`: 60 findings (16 moderate, 44 high); `--omit=dev`: 37 (16 moderate, 21 high); no critical; `npm audit fix` not run. Documentation only; no runtime or dependency changes.
+
+## 2026-10-13 — Corrective pass: agent handoff, docs, and conflict contract
+
+An earlier session stopped mid-task when its context ran out. Its last edits (API `pyproject.toml` pytest loop scope, `alembic/env.py` include filter, the response service, integration tests, README, notes) were intact and consistent; the corrective items below had not been started.
+
+### Agent handoff repaired
+- `CLAUDE.md` and `AGENTS.md` (kept identical) told agents to begin Milestone 1 and claimed pgvector was enabled. They now describe the implemented state, name Milestone 4 as next and not started, require inspecting Git state before editing, and forbid recreating the foundation.
+- `IMPLEMENTATION_HANDOFF.md` gained a status table; the original milestone plan is kept, and the "first pull request" section is marked historical. pgvector item annotated as superseded by D013.
+
+### Conflicting-response contract made deterministic
+- `record_response` now takes `SELECT … FOR UPDATE` on the suggestion-session row before reading the stored response or session state. A concurrent loser blocks until the winner commits, then sees the winner's row and receives `ConflictError` (409) — never `InvalidStateError` (422).
+- The `IntegrityError` handler only interprets `proposal_responses_client_event_id_key` and `uq_proposal_responses_proposal_id`; any other integrity error is re-raised. Previously, an unmatched integrity error was converted to a generic 409 "Concurrent response conflict".
+- The separate Another-path lock was removed; the earlier session lock covers it.
+- `test_concurrent_conflicting_responses_one_wins` now accepts only `ConflictError` (status 409, code `conflict`) for the loser.
+- Added `test_conflicting_response_after_answer_returns_409` and `test_unrelated_integrity_error_not_converted_to_conflict`.
+- Contract recorded in `ARCHITECTURE.md` under `proposal_responses`.
+
+### Concurrent-test fixture leak fixed
+- Repeated runs exposed that `concurrent_setup` cleanup did not delete `user_place_states`; each visit-confirmation run marked one of the 20 fixture places visited, so setup failed after ~18 runs. The fixture now purges all rows for the concurrent-test user before setup and after teardown.
+
+### Current counts
+- 12 spike, 68 API unit, 29 integration (27 + 2 new negative tests), 36 mobile Jest.
+- Mobile: Expo SDK 53, Expo Router `~5.1.11`.
+
+### Deferred
+- `apps/mobile/assets/icon.png` and `notification-icon.png` are 1×1 placeholders.
+- Milestone 3 offline queue/cached suggestion and EAS development build.
+
+## 2026-10-12 — Milestone 0.1 complete verification
+
+### Infrastructure
+- Docker Desktop installed and running.
+- `docker compose up -d db` → `nosh-db-1` healthy on `127.0.0.1:5432/nosh_dev`
+- `docker compose --profile test up -d db_test` → `nosh-db_test-1` healthy on `127.0.0.1:5433/nosh_test`
+- PostgreSQL 16.4, PostGIS 3.4
+- pgvector: intentionally absent (deferred per D013)
+
+### Event-loop / pytest-asyncio fix
+- Added `asyncio_default_test_loop_scope = "session"` and `asyncio_default_fixture_loop_scope = "session"` to `[tool.pytest.ini_options]` in `services/api/pyproject.toml`.
+- Root cause: the session-scoped `engine` fixture was created with one event loop, but function-scoped tests created new loops. asyncpg connections are bound to their creation loop — using them from a different loop raises "Event loop is closed".
+- Fix: all tests share a single session-wide event loop (the default changed from "session" to "function" in pytest-asyncio 0.21+).
+
+### Alembic check fix
+- Added `include_object` filter to `services/api/alembic/env.py`.
+- Excludes tiger, tiger_data, topology schemas (PostGIS Tiger Geocoder extension).
+- Excludes `spatial_ref_sys` and other non-application public tables.
+- Applied to both `run_migrations_offline()` and `run_migrations_online()`.
+- `alembic check` now prints "No new upgrade operations detected."
+
+### Concurrent response semantics fixes
+- `proposal.response is not None` check moved BEFORE `session.state != "active"` check.
+  - Reason: a concurrent winner changes session state, so the loser would incorrectly get InvalidStateError instead of returning the winner's response.
+- After IntegrityError and savepoint rollback: query `ProposalResponse` directly (not via `Proposal.response` relationship which may cache None from the identity map).
+- Both callers now return the same response ID for identical concurrent attempts.
+- Conflicting-action race: one wins, loser gets ConflictError (not InvalidStateError).
+
+### Session creation serialization
+- `get_or_create_session` now takes `SELECT ... FOR UPDATE` on the `DiningContext` row before checking/creating the session.
+- Double-checked locking: fast unlocked read → lock acquisition → re-read → create if still absent.
+- Guarantees both concurrent callers receive the same session ID.
+
+### Concurrency test improvements
+- All 4 concurrent tests use `asyncio.Barrier(2)` to maximise overlap.
+- `test_concurrent_identical_response_idempotent`: BOTH callers must succeed, BOTH must return same response ID.
+- `test_concurrent_conflicting_responses_one_wins`: exactly 1 winner, exactly 1 ConflictError/InvalidStateError loser, session state matches winner.
+- `test_concurrent_visit_confirmation_idempotent`: BOTH callers must succeed, BOTH must return same visit ID.
+- `test_concurrent_session_creation_idempotent`: BOTH callers must succeed, BOTH must return same session ID.
+- All assertions are exact — no "≥ 1 success" weak checks.
+
+### Verified results
+All checks pass. See §8 command-by-command results below.
+
+| Check | Result |
+|---|---|
+| Root lockfile + 12 spike tests | ✅ |
+| API lockfile, ruff, format, mypy 0 errors | ✅ |
+| 68 API unit tests | ✅ |
+| Alembic downgrade base → upgrade head (5433) | ✅ |
+| `alembic check` | ✅ "No new upgrade operations detected" |
+| 27 integration tests (incl. 4 concurrent) | ✅ **27/27 passed in 6.94s** |
+| API smoke test (/live, /ready, /openapi.json) | ✅ |
+| Mobile: TypeScript, ESLint, 36 Jest, Expo Doctor 18/18 | ✅ |
+| `git diff --check` | ✅ |
+| npm audit --omit=dev | ⚠️ 37 vulns in Expo's own deps (see advisory section) |
+
+## 2026-10-12 — Milestone 0.1 preparation: transaction, test-contract, and concurrency fixes
+
+### What was changed
+
+**Transaction correctness in record_response**
+- `db.add(resp)` and `await db.flush()` moved INSIDE the `begin_nested()` block so that autoflush cannot fire during SAVEPOINT creation and escape the IntegrityError handler.
+
+**Integration test contract fixes**
+- `test_visit_idempotent_same_proposal`: added Go response before confirming visit.
+- `test_visit_correction`: added Go response before confirming visit.
+- `test_visited_place_excluded_from_next_session`: added Go response before confirming visit.
+- `test_account_deletion_removes_all_data`: endpoint changed from `DELETE /v1/me` to `DELETE /v1/me/product-data`.
+- Added negative test `test_visit_requires_go_response_first`: proposal-backed visit without Go → 422 `proposal_not_accepted`.
+- Default integration test port changed from 5432 to 5433 (matches the `db_test` Compose service).
+
+**Real concurrency tests added (separate DB connections)**
+- `test_concurrent_identical_response_idempotent`: two sessions racing to insert the same Go response — exactly one row persists.
+- `test_concurrent_conflicting_responses_one_wins`: Go vs Not-today race — one wins, exactly one row.
+- `test_concurrent_visit_confirmation_idempotent`: two sessions racing to confirm the same proposal visit — exactly one visit row.
+- `test_concurrent_session_creation_idempotent`: two sessions creating the same window session — exactly one session row.
+- All use `committing_factory` with real commit/rollback semantics, not the rollback isolation fixture.
+
+**ORM model drift fixed**
+- `Visit.__table_args__` now includes the `uq_visits_user_proposal` partial unique index with `postgresql_where=text("proposal_id IS NOT NULL")`, matching migration 0003.
+
+**Progress metric extracted as testable pure function**
+- `compute_progress_months(visits, pre_nosh_places)` extracted from `get_progress()` in `visits/service.py`.
+- `test_progress_metric.py` now imports and calls the real production function — not a duplicate algorithm.
+- 8 unit tests covering: first visit, pre-Nosh exclusion, re-visit same place, negative rating, multi-place, month ordering, empty input, provenance permanence.
+
+**Progress integration tests added**
+- `test_progress_counts_new_positive_visits`: end-to-end Go → confirm → progress count.
+- `test_progress_excludes_pre_nosh_onboarding_place`: onboarding 'Been' mark → visit confirmed → not counted as new.
+
+### Verification status (this session)
+- Root lockfile + 12 spike tests: ✅
+- API ruff lint, format, mypy 0 errors, 68 unit tests: ✅
+- Mobile TypeScript, ESLint, 36 Jest tests: ✅
+- `git diff --check`: ✅
+- `git status --short`: 15 lines
+
+**Docker/PostgreSQL**: NOT INSTALLED at time of writing. Brew cask install fails without sudo for a symlink. User must run `brew install --cask docker` in a terminal with password. Integration tests and migrations cannot be verified until Docker is running.
+
+## 2026-10-12 — Pre-milestone repair and hardening (round 2)
+
+### Accidental node artifacts removed
+- `services/api/node_modules/` (223 MB), `services/api/package.json`, `services/api/package-lock.json` removed.
+- `.gitignore` updated: `node_modules/` ignored globally, Python caches covered, `memory/` excluded (agent-local).
+
+### Jest boundary test corrected
+- `2026-10-13T07:00:00Z` is midnight in LA (UTC-7) = Oct 13, not Oct 12. Test was asserting the wrong expected value.
+- `mealWindowKey.ts` rewritten: `activeMealType()` now respects minutes, active_days (0=Mon…6=Sun), half-open interval, invalid TZ (returns null not fallback), overnight window rejection.
+- `mealWindowKey()` returns `string | null`; mobile screen shows "No active meal window" when null.
+- 36 Jest tests; all pass.
+
+### Production auth hardened
+- `SUPABASE_URL` required in all production modes (issuer verification requires it).
+- URL normalized (trailing slashes stripped). Loopback check: only localhost/127.0.0.1/[::1].
+- `AppEnvironment` StrEnum: `local | test | production`. `AUTH_LOCAL_DEV=true` rejected in `production`.
+- JWKS: `cache_keys=False` (no stale revoked-key cache), JWK set cached 1 h, async via `anyio.to_thread.run_sync`, supports RS256+ES256.
+
+### Migration 0002 completed
+- Added `REVOKE ALL ON ALL ROUTINES` from `PUBLIC`, `anon`, `authenticated` + default privilege revocation for routines.
+
+### Migration 0004 added: `was_visited_before_nosh`
+- `user_place_states.was_visited_before_nosh BOOLEAN NOT NULL DEFAULT FALSE`.
+- Set on onboarding; never reset; backfilled. Progress metric uses this flag.
+
+### ORM models synced
+- `ProposalResponse` UniqueConstraint on `proposal_id`. `Visit.proposal_id` FK `ON DELETE SET NULL`. `UserPlaceState.was_visited_before_nosh` column.
+
+### Visit integrity: require exact Go response
+- `confirm_visit()` now verifies `ProposalResponse(response='go')` for the specific proposal.
+
+### Response idempotency: savepoints
+- Competing response race handled via savepoint; verifies winning response belongs to same user/action.
+
+### Deletion endpoint renamed
+- `DELETE /v1/me/product-data` (was `/v1/me`). Honest about scope: removes product data, not Supabase Auth identity.
+
+### Verification status
+- Root: lockfile ✓, 12 spike tests ✓
+- API: ruff ✓, format ✓, mypy 0 errors ✓, 65 unit tests ✓
+- Mobile: TypeScript ✓, ESLint ✓, 36 Jest tests ✓, expo install --check ✓, expo-doctor 18/18 ✓
+- git diff --check ✓, git status: 14 lines
+- Integration tests: NOT RUN (PostgreSQL/Docker unavailable)
+- npm audit (--omit=dev --audit-level=high): 37 vulnerabilities in Expo SDK 53 own deps (see below)
+
 ## 2026-10-12 — Phase-one product and architecture baseline
 
 ### Naming considered first and selected
@@ -89,6 +265,229 @@ The handoff directs Claude to begin with a reviewable backend-foundation pull re
 ### GitHub readiness
 
 Added a minimal GitHub Actions workflow that verifies the lockfile, installs the locked development dependencies, and runs the Python test suite on pushes to `main` and pull requests. Added a pull-request template that requires verification, privacy checks, canonical-document consistency, and phase-one scope discipline.
+
+## 2026-10-12 — Security, correctness, and contract hardening
+
+### What was fixed
+
+**Priority 1 — Database access security (D014)**
+- Migration 0002 revokes all privileges from Supabase's `anon` and `authenticated` roles on all product tables and sets default privileges to prevent auto-grant on future tables.  Uses `DO $$` blocks so it is a no-op on plain local PostgreSQL where those roles don't exist.
+- Decided not to move to a private schema (would require renaming in all models); REVOKE is simpler and correct.
+
+**Priority 2 — Production authentication**
+- Replaced `python-jose` with `PyJWT[cryptography]>=2.8`.
+- `_decode_hs256()`: validates exp, iss, aud (authenticated), role, and sub; granular error messages per claim.
+- `_decode_rs256()`: uses `PyJWKClient` with in-memory JWKS cache (1 h TTL, auto-refresh on new kid).
+- `AUTH_LOCAL_DEV=true` blocked at startup when `DATABASE_URL` points to a non-local host; checked via URL hostname parse.
+- Config validates at startup; fails loudly when neither `SUPABASE_JWT_SECRET` nor `SUPABASE_URL` is set in production mode.
+- 14 new auth unit tests covering all error cases: expired, wrong issuer, missing issuer, wrong audience, wrong role, missing sub, non-UUID sub, tampered signature.
+
+**Priority 3 — Response idempotency**
+- Migration 0003 adds `UNIQUE(proposal_id)` to `proposal_responses` (one response per proposal at DB level).
+- `record_response` catches `IntegrityError` from concurrent response races and returns the winner's result idempotently.
+- `SELECT FOR UPDATE` on session row serializes concurrent "Another" requests.
+- Idempotency check verifies that a replayed `client_event_id` matches the same proposal AND action; returns 409 if they differ.
+- Mobile idempotency key changed from `{proposal_id}:{action}:{Date.now()}` to `{proposal_id}:{action}` — stable across retries.
+
+**Priority 4 — Visit integrity**
+- Migration 0003 adds partial unique index `(user_id, proposal_id) WHERE proposal_id IS NOT NULL` — prevents concurrent duplicate confirmations.
+- Migration 0003 changes `visits.proposal_id` FK from implicit `RESTRICT` to `ON DELETE SET NULL` — unblocks cascade deletion through contexts.
+- `confirm_visit` now validates: proposal exists (404 otherwise), proposal belongs to the user (403), session state is `accepted` (422 session_not_accepted), and `place_id` matches the proposal (422 place_mismatch).
+- Cursor ownership validated in `list_visits` — cursor must belong to the requesting user.
+- Manual visits (no proposal_id) documented and allowed per D015.
+
+**Priority 5 — Account deletion**
+- Deletion order fixed: visits first (before contexts cascade to proposals), then notification_deliveries, then contexts (cascades sessions→proposals→responses), then place_states, device_tokens, profile.
+- `NotificationDelivery` rows explicitly deleted.
+- TODO documented: Supabase Auth user deletion requires service-role key (not yet implemented).
+
+**Priority 6 — Meal-window key**
+- New `apps/mobile/src/utils/mealWindowKey.ts`: pure function deriving `YYYY-MM-DD#meal_type` from the context's IANA time zone and configured meal type (not the device UTC date + local hour).
+- `apps/mobile/src/utils/mealWindowKey.test.ts`: 11 unit tests covering UTC boundary, DST spring-forward, DST fall-back, and device-TZ-differs-from-context-TZ scenarios.
+- Suggestion screen updated to use `mealWindowKey(activeContext)` instead of the old heuristic.
+
+**Priority 7 — Progress metric correctness**
+- `get_progress` now fetches `user_place_states` where `source='onboarding'` and `state='visited'` before counting new restaurants.  Pre-existing places are excluded from the "positive new" count.
+- 5 new unit tests in `test_progress_metric.py` covering: first visit, onboarding-been excluded, second visit same place, negative visit, multiple new places.
+
+**Priority 8 — Mobile/API contract**
+- Added `'no_candidates'` to `Session.state` type union.
+- Suggestion screen handles `no_candidates` with a specific empty-state message and settings link.
+
+**Priority 9 — CORS and environment**
+- CORS middleware now only activates when `CORS_ORIGINS` env var is set (non-empty).  No wildcard origins.  Allowed methods and headers explicitly enumerated.
+- `.gitignore` updated to ignore `.env.production`, `.env.staging`, `.env.development`, `.env.test`, `.env.*` — with explicit `!.env.example` exception.
+- `.env.example` updated to document JWKS path, CORS config, and AUTH_LOCAL_DEV safety note.
+
+**Priority 10 — Tests**
+- Replaced all `assert True` placeholders with real behavior tests (inactive/out-of-radius documented as contract tests).
+- Added `tests/test_auth.py` (14 unit tests, no DB).
+- Added `tests/test_progress_metric.py` (5 unit tests, no DB).
+- Integration tests in `test_integration.py` unchanged; 20 tests still require PostgreSQL.
+- Mobile: Jest configured (`jest-expo` preset); `mealWindowKey.test.ts` contains 11 unit tests runnable via `npm test`.
+
+**Decisions recorded**
+- D014: Revoke Supabase Data API access (REVOKE strategy in migration 0002).
+- D015: Manual visits may omit a proposal_id.
+
+### Verification status
+
+| Check | Result |
+|---|---|
+| Root lockfile (`uv lock --check`) | ✅ Pass |
+| Root spike tests (12) | ✅ 12 passed |
+| API lockfile (`uv lock --check`) | ✅ Pass |
+| Ruff lint | ✅ Clean |
+| Ruff format | ✅ Clean |
+| Strict mypy (0 errors) | ✅ Pass |
+| API unit tests (56) | ✅ 56 passed, 20 deselected |
+| `git diff --check` | ✅ Clean |
+| Mobile `npm ci` | ✅ Clean |
+| Mobile TypeScript `tsc --noEmit` | ✅ Clean |
+| Mobile ESLint | ✅ Clean |
+| Mobile `expo install --check` | ✅ Clean |
+| Mobile `npm audit --omit=dev` | ⚠️ 37 vulnerabilities in Expo's own deps; not fixable without breaking the SDK 53 matrix |
+| Integration tests (20) | ⏳ Written; require PostgreSQL (Docker not available in this environment) |
+| Alembic migration round-trip | ⏳ Written (3 migrations); requires PostgreSQL |
+
+### Remaining blockers
+
+1. PostgreSQL not available — integration tests and migration tests cannot execute locally.
+2. Supabase credentials — production auth requires `SUPABASE_JWT_SECRET` or `SUPABASE_URL`.
+3. Supabase Auth user deletion — `DELETE /v1/me` removes product data but not the Supabase Auth record; requires `SUPABASE_SERVICE_ROLE_KEY` (not yet implemented, documented in `users/service.py`).
+4. Production dependency audit — 37 moderate/high vulnerabilities in Expo SDK 53's own dependencies; tracked upstream.
+
+## 2026-10-12 — Backend vertical slice repair and verification
+
+### What was fixed and added
+
+**Mobile (Priority 1):**
+- Upgraded to a coherent Expo SDK 53 dependency matrix via `npx expo install --fix`.
+  React 19.0.0, React Native 0.79.6, Expo Router 5.1.x — all confirmed by `expo install --check: Dependencies are up to date`.
+- Fixed JSX syntax error in `confirmation/[sessionId].tsx` (curly right-quote in string literal).
+- Fixed confirmation screen: now passes `proposalId`, `placeId`, and `placeName` as route params on Go so visit confirmation never submits an empty `place_id`.
+- Fixed unescaped entity in `onboarding.tsx`.
+- Removed unused import (`useMemo`) in `index.tsx`.
+- Added `eslint.config.js` for Expo SDK 53 flat config (`eslint-config-expo/flat`).
+- Added placeholder `assets/icon.png` and `assets/notification-icon.png`.
+- `npm ci`, `npx tsc --noEmit`, `npx eslint .`, and `npx expo install --check` all pass clean.
+- `npx expo-doctor`: 18/18 checks passed.
+
+**Backend bugs (Priority 2):**
+- Fixed missing `await` on `_session_id_for_proposal()` in the idempotency path.
+- Added ownership check on the idempotency fast-path (cross-user replay now returns 403).
+- One-response-per-proposal idempotency: existing proposal.response returns the stored result rather than raising ConflictError.
+- Distance is now stored in `candidate_snapshot["distance_meters"]` and correctly serialized in `ProposalResponse_Schema`.
+- Session creation with no candidates immediately enters `no_candidates` state.
+- `select_cuisine` now returns `(cuisine_id, sampled_score)` so the score stored in the decision log is the one actually used, not a re-sample.
+- `_load_cuisine_stats` now populates `history_frequency` from `user_place_states` visited counts (onboarding prior).
+- Visit `confirm_visit` validates proposal ownership and `place_id` match before writing.
+
+**Database (Priority 3):**
+- Removed `CREATE EXTENSION vector` from migration and `db/init.sql`; pgvector deferred (D013).
+- Docker Compose ports bound to `127.0.0.1`.
+
+**Auth security (Priority 4):**
+- Auth dependency now validates Supabase JWT: expiry, issuer, audience (`authenticated`), and `role` claim.
+- `validate_auth_config()` called at startup; fails immediately when `AUTH_LOCAL_DEV=false` and `SUPABASE_JWT_SECRET` is empty.
+- Readiness endpoint returns `{"status": "unavailable"}` rather than raw DB exception details.
+- `DELETE /v1/me` now hard-deletes all user-owned rows (contexts, sessions, proposals, responses, place-states, visits, device tokens, profile) rather than soft-deleting only the profile.
+
+**Tests (Priority 5):**
+- Added `tests/test_integration.py`: 20 integration tests covering Go/Another/Not today, idempotency, cross-user authorization, candidate exhaustion, visit confirmation, correction, progress, not-interested exclusion, visited exclusion, account deletion, and migration round-trip.
+- Tests require a live PostgreSQL; auto-apply migrations on first run.
+
+**CI (Priority 6):**
+- CI now runs: root lockfile check, API lockfile check, ruff lint, ruff format, strict mypy, unit tests, migration upgrade/downgrade/upgrade, real integration tests, `npm ci`, TypeScript, ESLint, Expo dependency check, `git diff --check`.
+
+**Types (Priority 6):**
+- Fixed all 29 mypy strict errors: return-type annotations on all route handlers, `dict[str, T]` generic args, `AsyncEngine` return type, lifespan `AsyncGenerator` return, `DiningContext` typed parameter replacing `object`.
+
+### Decisions recorded
+
+- D013: pgvector deferred until an embedding feature has a defined evaluation set.
+
+### Verification status
+
+- Root spike tests: 12 passed.
+- API unit tests: 30 passed, mypy 0 errors, ruff clean.
+- Integration tests: written and structured; require PostgreSQL to execute.
+- Mobile: `npm ci` clean, TypeScript clean, ESLint clean, Expo Doctor 18/18.
+- `git diff --check`: passes.
+
+### Remaining blockers
+
+- PostgreSQL required for integration tests (Docker not available in this environment).
+- Supabase project and SUPABASE_JWT_SECRET needed for production auth.
+- Milestone 4 (notifications, hosting, TestFlight) not started.
+
+## 2026-10-12 — Milestones 1–3 implementation
+
+### What was built
+
+**Milestone 1 — Repository and backend foundation**
+
+- Created monorepo structure: `services/api/`, `apps/mobile/`, `jobs/`, `db/`, `packages/api-client/`
+- Scaffolded FastAPI modular monolith under `services/api/` with its own `pyproject.toml` and uv project
+- Dependencies: FastAPI 0.115, Pydantic v2, SQLAlchemy 2, Alembic, asyncpg, GeoAlchemy2, psycopg2-binary, python-jose, pydantic-settings
+- Dev tools: ruff (lint + format), pytest, pytest-asyncio, mypy
+- Docker Compose PostgreSQL with PostGIS 16-3.4; pgvector enabled via `db/init.sql`
+- `.env.example` at root and `services/api/.env.example` with local-dev defaults
+- `/health/live` (no auth, no DB) and `/health/ready` (DB ping, 503 on failure)
+- Initial Alembic migration (`0001_initial_schema.py`) covering all 13 tables from ARCHITECTURE.md
+- Migration tested for upgrade and downgrade in CI
+- CI updated: spike tests, API lint/format/test/migration jobs, mobile TypeScript check
+
+**Milestone 2 — Deterministic suggestion API**
+
+- 20 fixture restaurants in SF Mission District loaded via `load_fixture_data()`
+- PostGIS radius filtering via `ST_DWithin` and `ST_Distance`
+- `policy_v0` recommendation engine in `app/recommendations/engine.py` (pure functions, no I/O):
+  - Thompson-sampling cuisine selection with Beta posteriors
+  - History prior `Beta(1 + 4f, 1 + 4(1-f))` per RECOMMENDATIONS.md
+  - Place scoring: 0.45 quality + 0.30 distance + 0.15 context_fit + 0.10 exploration
+  - Deterministic via `sha256(session_id:sequence:policy_version)` seed
+- All eligibility filters enforced upstream in `build_candidates()`; engine trusts caller
+- Idempotent session creation via `UNIQUE(dining_context_id, meal_window_key)`
+- Go/Another/Not today responses with validated state transitions
+- Visit confirmation, rating, correction, history, and monthly progress endpoints
+- Full authorization: every user-owned resource checked for ownership
+- Mobile write idempotency via `client_event_id` on proposal responses and `proposal_id` on visits
+
+**Milestone 3 — Expo client**
+
+- Expo Router 4 app under `apps/mobile/` with strict TypeScript
+- Hand-maintained typed client (`src/api/client.ts`) mirroring FastAPI OpenAPI schema
+- Auth hook (`src/hooks/useAuth.ts`) with clearly isolated local-dev adapter (UUID token) and interface ready for Supabase JWT swap
+- Screens: sign-in, context creation, onboarding place classification, suggestion card (main), confirmation, rating, history, progress, settings
+- Apple Maps handoff on Go via `maps://` deep link with address fallback
+- TanStack Query v5 for all data fetching and mutations
+- SuggestionCard and ResponseButtons components
+
+### Tests
+
+- 12 existing spike tests: all pass (unchanged)
+- 30 new API unit tests (no database required):
+  - pool value and cuisine scoring mechanics
+  - all required recommendation invariants (visited/not-interested exclusion, no repeat within session, exhaustion, determinism, policy version)
+  - health endpoint (live/ready, 503 on DB failure)
+  - state machine documentation tests
+
+### Key contracts
+
+- `policy_v0` treats Another as no cuisine update (per D011/RECOMMENDATIONS.md §7)
+- Not today is timing feedback only; no cuisine or place preference updated
+- Only confirmed + positively rated + previously unvisited visits count toward North Star
+- Go is intent; visit confirmation is a separate explicit step
+
+### Remaining for Milestone 4
+
+- Expo push notification registration and device token endpoint
+- Idempotent scheduler/worker (pre-meal-window session creation + notification)
+- Visit-confirmation prompts sent after the meal window closes
+- Time-zone and DST regression tests
+- API hosting vendor selection (D012 deferred)
+- EAS development build and TestFlight environment setup
 
 ## 2026-10-12 — GitHub connection and Claude brief
 

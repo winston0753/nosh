@@ -9,24 +9,136 @@ permissions:
   contents: read
 
 jobs:
-  python-tests:
+  # ── Existing spike tests ─────────────────────────────────────────────────
+  spike-tests:
+    name: Spike tests (root)
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
 
-      - name: Install uv and Python
-        uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: "3.12"
           enable-cache: true
 
-      - name: Verify lockfile
+      - name: Verify root lockfile
         run: uv lock --check
 
+      - name: Install root dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Run spike tests
+        run: uv run --frozen pytest tests/ -q
+
+      - name: Check trailing whitespace
+        run: git diff --check
+
+  # ── API service ──────────────────────────────────────────────────────────
+  api:
+    name: API (services/api)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: nosh
+          POSTGRES_PASSWORD: nosh_dev
+          POSTGRES_DB: nosh_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://nosh:nosh_dev@localhost:5432/nosh_test
+      AUTH_LOCAL_DEV: "true"
+      APP_ENVIRONMENT: "test"
+
+    defaults:
+      run:
+        working-directory: services/api
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Verify API lockfile
+        run: uv lock --check
+
+      - name: Install API dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Lint (ruff)
+        run: uv run --frozen ruff check app/ tests/
+
+      - name: Format check (ruff)
+        run: uv run --frozen ruff format --check app/ tests/
+
+      - name: Type check (mypy strict)
+        run: uv run --frozen mypy app/ --strict
+
+      - name: Unit tests (no DB)
+        run: uv run --frozen pytest tests/ -q -m "not integration"
+
+      - name: Apply migrations
+        run: uv run --frozen alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg2://nosh:nosh_dev@localhost:5432/nosh_test
+
+      - name: Rollback migrations
+        run: uv run --frozen alembic downgrade base
+        env:
+          DATABASE_URL: postgresql+psycopg2://nosh:nosh_dev@localhost:5432/nosh_test
+
+      - name: Re-apply migrations (round-trip verification)
+        run: uv run --frozen alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg2://nosh:nosh_dev@localhost:5432/nosh_test
+
+      - name: Integration tests (real PostgreSQL)
+        run: uv run --frozen pytest tests/ -q -m "integration" -v
+        env:
+          DATABASE_URL: postgresql+asyncpg://nosh:nosh_dev@localhost:5432/nosh_test
+
+  # ── Mobile ───────────────────────────────────────────────────────────────
+  mobile:
+    name: Mobile (apps/mobile)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
       - name: Install dependencies
-        run: uv sync --locked --group dev
+        run: npm ci
 
-      - name: Run tests
-        run: uv run pytest -q
+      - name: TypeScript type check
+        run: npm run typecheck
 
+      - name: ESLint
+        run: npm run lint
+
+      - name: Jest unit tests
+        run: npm test -- --runInBand
+
+      - name: Expo dependency check
+        run: npx expo install --check
+
+      - name: Expo Doctor
+        run: npx expo-doctor

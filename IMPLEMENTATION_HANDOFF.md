@@ -29,6 +29,30 @@ The material under `docs/` is historical research. Do not let it override the ca
 - Do not add delivery, ordering, background location, calendar access, social features, RAG, agents, or public-launch scope.
 - Update the canonical documents in the same change whenever implementation changes a documented contract or decision.
 
+## Status (as of 2026-10-13)
+
+| Milestone | Status |
+|---|---|
+| 1 — Repository and backend foundation | **Complete** (local; uncommitted until the user commits) |
+| 2 — Deterministic suggestion API | **Complete** |
+| 3 — Expo vertical slice | **Partially complete** — local vertical slice implemented; tester-readiness work remains |
+| 4 — Notifications and private cohort readiness | Not started; not next (only the `device_tokens` and `notification_deliveries` tables exist) |
+
+The current checkpoint is **Milestone 0.1 — Working Local Foundation**: the local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. It is suitable for a source-control checkpoint but not for TestFlight or external testers.
+
+**Next: complete Milestone 3.** Remaining work:
+
+1. Replace the local UUID auth adapter with Supabase passwordless email authentication in the mobile app.
+2. Let users select location, radius, and notification days; context creation currently hardcodes the SF Mission coordinate, 1,600 m, and every day.
+3. Persist the current suggestion for offline use.
+4. Queue idempotent response writes during transient network failures.
+5. Configure an EAS development/TestFlight build.
+6. Replace the 1×1 placeholder app and notification icons.
+
+Milestone 4 begins only after Milestone 3 is complete.
+
+Do not recreate Milestones 1–2 or the existing Milestone 3 slice. Inspect Git state before modifying files, extend the existing code, and see `README.md` for current verification commands and `notes.md` for the dated implementation log. The milestone list below is kept as the original plan.
+
 ## Implementation order
 
 ### Milestone 1 — Repository and backend foundation
@@ -36,7 +60,7 @@ The material under `docs/` is historical research. Do not let it override the ca
 1. Create the directory structure described in `ARCHITECTURE.md`.
 2. Preserve the existing simulator and tests.
 3. Add FastAPI, Pydantic, SQLAlchemy, Alembic, database driver, linting, and type checking.
-4. Add local Docker Compose PostgreSQL with PostGIS and pgvector enabled.
+4. Add local Docker Compose PostgreSQL with PostGIS and pgvector enabled. *(Superseded by D013: pgvector is deferred and intentionally absent.)*
 5. Implement configuration from environment variables and provide `.env.example` without secrets.
 6. Add `/health/live`, `/health/ready`, and OpenAPI generation.
 7. Create initial migrations for profiles, dining contexts, places, cuisines, place cuisines, user place states, suggestion sessions, proposals, responses, and visits.
@@ -71,9 +95,9 @@ The material under `docs/` is historical research. Do not let it override the ca
 6. Verify time-zone, daylight-saving, duplicate-action, revoked-permission, and exhausted-candidate behavior.
 7. Prepare separate development and TestFlight environments and document setup.
 
-## First pull request
+## First pull request (historical — completed)
 
-Start with Milestone 1 only. Keep it reviewable. The first PR is complete when:
+The original instruction was to start with Milestone 1 only. That foundation now exists; these criteria remain the baseline every later change must preserve:
 
 - the existing 12 tests still pass;
 - the API boots locally;
