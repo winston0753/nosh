@@ -1,5 +1,37 @@
 # Project Notes
 
+## 2026-10-20 — Audit, architecture review, and direction change (docs only)
+
+Started from branch `milestone-0.1-correctness-hardening` with the 2026-10-16 hardening pass still uncommitted (31 modified files, root `jobs/` deleted, new tests and modules untracked). No application code, dependencies, or migrations were changed; the development database was not touched. The hardening pass was then committed alone as `109b124` (staged from reconstructed pre-edit document versions so these document changes stay separate); these document changes are not committed.
+
+### Audit findings
+- **Expo SDK 53 cannot ship to TestFlight as is:** App Store Connect has required Xcode 26 / iOS 26 SDK builds since 2026-04-28; Expo recommends SDK 54+. Latest is SDK 57 (React Native 0.86).
+- **Stale documents (fixed here):** ARCHITECTURE listed `DELETE /v1/me` (actual `DELETE /v1/me/product-data`) and unbuilt device routes without marking them; README said 13 endpoints (16 routes exist), described auth as HS256 only (JWKS is implemented), and required Node 20 (end of life); ARCHITECTURE claimed an OpenAPI-generated client (`packages/api-client/` is empty) and Python 3.12+ (`requires-python` is 3.11+); CI lacked `alembic check`.
+- **Code issues confirmed (not fixed; addressed by the planned work):** `highly_rated` comes from fictional `quality_score`; cuisine sampling depends on candidate order and the radius query sorts only by distance; `exclusion_counts` is always empty; `context_fit` ignores meal type; TanStack query keys are not scoped per user; `mutations: { retry: 1 }` applies to non-idempotent context creation; Another reads current context settings; disabled contexts can open sessions.
+
+### Decisions (D019–D028)
+- **D019** upgrade Expo SDK 53 → 57.
+- **D020** current location first; a meal schedule (weekday lunch default, dinner opt-in) and optional Home/Work fallback spots replace dining contexts.
+- **D021** Google Places end to end: live candidates and signals, Google map and attribution, Go opens Google Maps (supersedes D007's Apple Maps handoff and D008's curated catalog).
+- **D022** persist only provider IDs and Nosh-owned data.
+- **D023** notifications are location-free nudges.
+- **D024** `policy_v1`: quality floor, hidden-gem boost, price fit, national-chain penalty, deterministic ordering.
+- **D025** Been here already on the card replaces bulk onboarding classification.
+- **D026** per-meal price ceiling, no spend tracking.
+- **D027** curated-catalog plan retired.
+- **D028** ~$50/month budget.
+
+Evidence and quotations are in `docs/research/2026-10-20-place-data-and-map-terms.md`. In short, Apple MapKit and the Apple Maps Server API have no ratings, hours, or price. Google forbids using Places content with a non-Google map (Service Specific Terms §14.2). Foursquare forbids co-mingling its ranking signals with Nosh's own (Master Terms §7.5.7). Yelp starts at $229/month. Overture has no ratings or hours.
+
+### Documents changed
+DECISIONS (D007, D008, D017, and D018 statuses; D019–D028), PRODUCT (summary, principle 6, journey, F2–F8, F11, edge cases, non-goals), ARCHITECTURE (stack, layout, components, planned schema, endpoints, notifications, new §17 provider terms), RECOMMENDATIONS (`policy_v1` notice and known `policy_v0` defects), IMPLEMENTATION_HANDOFF and CLAUDE/AGENTS (kept identical; direction change and the new Milestone 3 order), README, and CI (`alembic check` step; Node 22). The 2026-10-19 report moved from `reports/` to `docs/research/` and is marked superseded.
+
+### Open questions
+- How a visit's cuisine label is captured for cuisine learning without storing Google-derived data. Recommended: the rating step asks the user to confirm a pre-filled cuisine.
+- The real iOS bundle identifier (`com.nosh.app` is a placeholder).
+- Whether Google's "modify search results" clause (ToS §3.2.3(g)) covers filtering and re-ranking. Clarify with Google before any public launch.
+- Untracked `.agents/`, `skills-lock.json`, `research_notes/`, and two unrelated files in `reports/` are not project material and remain uncommitted.
+
 ## 2026-10-16 — Correctness hardening (branch `milestone-0.1-correctness-hardening`)
 
 Started from `main` at `de67821` (PR #1 merged), clean tree, synchronized with `origin/main`. Every finding below was reproduced before it was changed. Not committed.

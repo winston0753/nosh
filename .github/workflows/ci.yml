@@ -103,6 +103,11 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg2://nosh:nosh_dev@localhost:5432/nosh_test
 
+      - name: Check models match migrations
+        run: uv run --frozen alembic check
+        env:
+          DATABASE_URL: postgresql+psycopg2://nosh:nosh_dev@localhost:5432/nosh_test
+
       - name: Integration tests (real PostgreSQL)
         run: uv run --frozen pytest tests/ -q -m "integration" -v
         env:
@@ -121,7 +126,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
 

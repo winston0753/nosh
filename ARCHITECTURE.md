@@ -2,7 +2,7 @@
 
 - **Status:** Phase-one baseline
 - **Version:** 0.1
-- **Last updated:** 2026-10-16
+- **Last updated:** 2026-10-20
 
 ## 1. Architecture goals
 
@@ -36,7 +36,8 @@ Phase one does not require microservices, a message broker, a separate vector da
 │ Evaluation commands         │
 └───────┬─────────────┬───────┘
         │             │
-        │             └──────────► Expo Push Service
+        │             ├──────────► Expo Push Service
+        │             └──────────► Google Places API (planned, D021)
         ▼
 ┌─────────────────────────────┐
 │ Supabase PostgreSQL         │
@@ -55,12 +56,13 @@ Phase one does not require microservices, a message broker, a separate vector da
 - Expo Router
 - TanStack Query
 - `expo-notifications`
-- Generated API client from OpenAPI
+- Typed API client, currently hand-written in `apps/mobile/src/api/`; generation from OpenAPI into `packages/api-client/` is planned and not yet implemented
+- Planned for Milestone 3: `expo-location` (foreground, when-in-use only) and a Google map view on the suggestion card (D020, D021)
 - EAS development builds and TestFlight
 
 ### API
 
-- Python 3.12+
+- Python 3.11+ (`requires-python`); CI runs 3.12
 - FastAPI
 - Pydantic v2
 - SQLAlchemy 2
@@ -108,7 +110,7 @@ nosh/
 ├── db/
 │   └── migrations/
 ├── packages/
-│   └── api-client/
+│   └── api-client/          # placeholder; generated client not yet implemented
 ├── spike/
 ├── tests/
 ├── PRODUCT.md
@@ -125,15 +127,15 @@ Jobs live inside `services/api/jobs/` and import the application as the top-leve
 ### Mobile application
 
 - Account session and onboarding UI
-- Dining-context configuration
-- Foreground location at use time, with the context's saved anchor as the fallback (see DECISIONS.md D017)
+- Meal-schedule survey and settings (D020; currently dining-context configuration)
+- Foreground location at use time, with optional Home/Work spots as the fallback (D017, D020)
 - Current suggestion display
 - Notification registration and deep links
 - Go, Another, and Not today actions
-- Maps handoff
+- Google Maps handoff (D021; currently Apple Maps)
 - Visit confirmation and rating
 - History, progress, and privacy controls
-- Local caching of the current suggestion and queued response writes
+- Local persistence of session and proposal identifiers and queued response writes; provider content is not cached (D022)
 
 The mobile client contains presentation logic, not recommendation logic.
 
@@ -150,9 +152,8 @@ The mobile client contains presentation logic, not recommendation logic.
 
 ### Scheduler/worker
 
-- Find dining contexts approaching their meal windows
-- Create a suggestion idempotently
-- Send at most one initial notification per context and meal window
+- Find users whose meal windows are approaching
+- Send at most one location-free nudge per user and meal window; the suggestion is created when the user opens the app (D023)
 - Create due visit-confirmation prompts
 - Retry transient failures with bounded backoff
 - Ignore disabled contexts and deleted users
@@ -166,9 +167,11 @@ The initial worker may poll PostgreSQL on a short interval. A message broker is 
 - Score cuisines and places
 - Persist score components and policy version
 - Return the chosen proposal and factual reason codes
-- Contain no network or LLM dependency in the decision path
+- Contain no network or LLM dependency in the decision path: the suggestion service fetches provider candidates first and passes them to pure ranking functions
 
 ### Place administration and ingestion
+
+> Superseded for product data by D021 and D027: candidates come live from Google Places, and the fixture importer survives only to load test data until a fixture place provider replaces it.
 
 - Import curated CSV or JSON fixtures
 - Normalize source identifiers and cuisine labels
@@ -177,6 +180,12 @@ The initial worker may poll PostgreSQL on a short interval. A message broker is 
 - Preserve source and refresh timestamps
 
 ## 7. Database design
+
+This section describes the implemented schema (migrations 0001–0004). Accepted changes that are not yet implemented:
+
+- **D020:** `dining_contexts` is replaced by a per-user meal schedule and optional Home/Work anchors; `suggestion_sessions` becomes unique on `(user_id, meal_window_key)`.
+- **D021/D022:** `places` becomes a registry of provider identifiers (Google `place_id`) without stored names, addresses, or metadata; a session stores its ranked list of place identifiers; `proposals.candidate_snapshot` keeps only identifiers, ranks, and Nosh-owned components.
+- **D025:** a Been here already event records `was_visited_before_nosh` from the card.
 
 All user-owned tables include `user_id`, `created_at`, and `updated_at` where applicable. Timestamps are stored in UTC. Dining contexts also store an IANA time-zone name.
 
@@ -358,7 +367,7 @@ Response writes lock the owning suggestion-session row before reading the stored
 
 ```text
 GET    /v1/me
-DELETE /v1/me
+DELETE /v1/me/product-data
 
 GET    /v1/contexts
 POST   /v1/contexts
@@ -378,9 +387,11 @@ PATCH  /v1/visits/{visit_id}
 GET    /v1/visits
 GET    /v1/progress
 
-POST   /v1/devices
-DELETE /v1/devices/{device_id}
+POST   /v1/devices                     # Milestone 4; not implemented
+DELETE /v1/devices/{device_id}         # Milestone 4; not implemented
 ```
+
+Sixteen routes are implemented today (the list above minus the two device routes). D020, D021, and D025 replace the context and onboarding routes and add a Been here already write; their contracts are designed with the implementation.
 
 `POST /v1/suggestion-sessions` returns the existing session if the same dining context and meal-window key are submitted again.
 
@@ -428,11 +439,11 @@ State transitions are validated by the server. Duplicate requests return the alr
 
 ## 11. Notifications
 
-- Register notification categories and device tokens in the mobile app.
-- Generate the suggestion before sending the notification.
+- Register device tokens in the mobile app.
+- The meal-time notification is a location-free nudge; it names no restaurant, and the suggestion is created after the user opens the app (D023).
 - Put only opaque identifiers and non-sensitive display text in the payload.
-- Deep-link to the stored suggestion session.
-- Use a unique deduplication key per user, context, window, and notification kind.
+- Visit-confirmation prompts deep-link to the stored suggestion session.
+- Use a unique deduplication key per user, meal window, and notification kind.
 - Keep the in-app flow usable when notification permission is denied.
 
 ## 12. Testing strategy
@@ -521,3 +532,16 @@ Add complexity only when evidence requires it:
 4. Structured craving filters → hybrid search (adds pgvector, deferred per D013)
 5. Single-person context → group preference model
 6. Private cohort → public App Store readiness
+
+## 17. Provider terms constraints
+
+Canonical rules from D021 and D022; evidence and quotations are in `docs/research/2026-10-20-place-data-and-map-terms.md`.
+
+- **One provider in the meal-time path.** Google Places content may not be used in conjunction with a non-Google map (Service Specific Terms §14.2; ToS §3.2.3(e)). The card uses a Google map with Google attribution, and Go opens Google Maps. Do not mix Apple Maps data, maps, or handoff with Google-selected places.
+- **Store only identifiers.** Persist the Google `place_id` and Nosh-owned data (user states, responses, visits, ratings, Nosh chain-list matches, ranks, and components computed from Nosh-owned inputs). Never persist names, addresses, ratings, review counts, hours, types, or values derived from them, in the database, logs, analytics, or device caches.
+- **Fetch live.** Card and history details are fetched when displayed. A failed fetch shows an explicit retry state, never stale stored content.
+- **Explicit field masks.** Request only the fields the policy needs; the most expensive field sets the billed SKU.
+- **Quotas.** Configure Google Cloud quotas and billing alerts at the free-tier limits in D028.
+- **Keys.** The server key stays in API configuration; the iOS Maps SDK key is restricted to the app's bundle identifier. Neither is logged.
+- **Tests and CI** use a fixture place provider and need no provider key.
+- **Open ambiguity.** Whether filtering and re-ranking Places results counts as modifying search results (ToS §3.2.3(g)) must be clarified with Google before any public launch.

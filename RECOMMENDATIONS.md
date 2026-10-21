@@ -2,7 +2,11 @@
 
 - **Status:** Phase-one baseline
 - **Version:** `policy_v0`
-- **Last updated:** 2026-10-16
+- **Last updated:** 2026-10-20
+
+> **Successor accepted:** `policy_v1` (DECISIONS.md D024) is accepted but not implemented. It adds hard filters for opening hours and the per-meal price ceiling, a Bayesian review-count-adjusted quality floor, a hidden-gem boost, price fit, and a national-chain penalty, removes the `highly_rated` reason code, and sorts candidates by provider ID before sampling. Under D022 its decision record stores only place identifiers, ranks, and Nosh-owned components. This document describes `policy_v0` as implemented until `policy_v1` lands.
+>
+> **Known `policy_v0` defects** (found 2026-10-19, confirmed 2026-10-20, to be fixed by `policy_v1`): `highly_rated` is emitted from the fixtures' fictional `quality_score`; cuisine samples are drawn in candidate encounter order, and the radius query sorts only by distance, so equal distances or reordered inputs can change the winner; `exclusion_counts` is always empty; `context_fit` does not depend on the meal type.
 
 ## 1. Objective
 

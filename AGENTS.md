@@ -2,7 +2,7 @@
 
 You are continuing the phase-one Nosh MVP in this repository.
 
-Nosh is an iOS-first restaurant-discovery app that presents one timely, nearby, unvisited restaurant; supports **Go**, **Another**, and **Not today**; opens Apple Maps; and later confirms whether the visit happened and was positive.
+Nosh is an iOS-first restaurant-discovery app that presents one timely, nearby, unvisited restaurant wherever the user is at meal time; supports **Go**, **Another**, and **Not today**; opens Google Maps; and later confirms whether the visit happened and was positive.
 
 ## Before you change anything
 
@@ -24,7 +24,7 @@ Read these before changing code:
 
 Root documents are canonical. Files under `docs/` are historical research.
 
-## Current state (as of 2026-10-16)
+## Current state (as of 2026-10-20)
 
 Checkpoint: **Milestone 0.1 — Working Local Foundation**, merged to `main` via PR #1, plus a correctness-hardening pass (branch `milestone-0.1-correctness-hardening`; see `notes.md` 2026-10-16). The local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. This is suitable for source control; it is **not** ready for TestFlight or external testers.
 
@@ -39,21 +39,31 @@ Checkpoint: **Milestone 0.1 — Working Local Foundation**, merged to `main` via
 
 - **Backend:** FastAPI modular monolith in `services/api/` (own uv project, `nosh-api`), SQLAlchemy 2 async + asyncpg, Alembic migrations `0001`–`0004`, `/health/live`, `/health/ready`, OpenAPI, deterministic `policy_v0` engine, suggestion sessions with Go / Another / Not today, visit confirmation, rating, correction, history, progress, and product-data deletion.
 - **Database:** Docker Compose PostGIS 16-3.4. `db` (port 5432, `nosh_dev`) is persistent development data; `db_test` (port 5433, `nosh_test`, `--profile test`) is disposable. pgvector is intentionally absent (D013).
-- **Mobile:** Expo SDK 53 app in `apps/mobile/` with Expo Router `~5.1.11`, React Native 0.79, strict TypeScript, TanStack Query, and Apple Maps handoff. Do not upgrade or downgrade Expo, React Native, or Expo Router without a recorded decision.
+- **Mobile:** Expo SDK 53 app in `apps/mobile/` with Expo Router `~5.1.11`, React Native 0.79, strict TypeScript, TanStack Query, and (currently) Apple Maps handoff. D019 records the upgrade to SDK 57; do not change Expo, React Native, or Expo Router versions otherwise without a recorded decision.
 - **Jobs:** batch jobs live in `services/api/jobs/` and import the app as `app`; run from `services/api` with `uv run --frozen python -m jobs.ingest_places.importer`.
 - **Contracts added by the hardening pass:** onboarding classification via `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state` (D018); strict context/meal-window validation with `422 validation_error` (D016); atomic `user_place_states` upserts; replay-equivalent responses; `(visited_at, id)` visit pagination.
 - **Tests:** 12 root spike tests, 148 API unit tests, 46 PostgreSQL integration tests (including 6 genuine concurrent-database tests), and 43 mobile Jest tests.
 
+## Direction change (2026-10-20)
+
+Decisions D019–D028 (evidence: `docs/research/2026-10-20-place-data-and-map-terms.md`) are accepted but **not yet implemented**; the code still reflects the earlier design:
+
+- **Current location first (D020):** a per-user meal schedule (weekday lunch default, dinner opt-in) and optional Home/Work fallback spots replace dining contexts.
+- **Google Places end to end (D021):** live candidates and ranking signals; Google map and attribution on the card; Go opens Google Maps. Never combine Google-selected places with Apple Maps data, maps, or handoff.
+- **Store only IDs (D022):** persist the Google `place_id` and Nosh-owned data; never store, log, or cache provider names, addresses, ratings, hours, types, or values derived from them.
+- **Notifications are location-free nudges (D023);** `policy_v1` ranking (D024); Been here already on the card (D025); per-meal price ceiling (D026); curated-catalog plan retired (D027); ~$50/month budget (D028).
+
 ## Next: complete Milestone 3
 
-Milestone 3 remains incomplete because:
+The correctness-hardening pass is committed on `milestone-0.1-correctness-hardening` (`109b124`), not yet merged to `main`. Next, in order (see `IMPLEMENTATION_HANDOFF.md`):
 
-1. Mobile authentication is only a local UUID adapter; Supabase passwordless email authentication is not implemented in the app.
-2. Context creation hardcodes the SF Mission coordinate, a 1,600-meter radius, and every active day; users cannot select location, radius, or notification days as `PRODUCT.md` requires. Location should default to foreground current location at use time with the saved anchor as fallback (D017); background location remains banned.
-3. The current suggestion is not persisted for offline use.
-4. Idempotent response writes are not queued during transient network failures.
-5. No EAS development/TestFlight build is configured.
-6. The app and notification icons are 1×1 placeholders.
+1. Upgrade Expo SDK 53 → 57 (D019); TestFlight uploads require Xcode 26.
+2. Supabase passwordless email authentication, with per-user query keys and cache clearing on sign-out and deletion (the app still uses a local UUID adapter).
+3. Meal schedule, price ceiling, and fallback spots replace dining contexts (D020, D026); context creation currently hardcodes the SF Mission coordinate, 1,600 m, and every day.
+4. Place-provider abstraction (Google + test fixtures), `policy_v1`, and Been here already (D021, D022, D024, D025).
+5. Mobile current-location flow with a Google map and Google Maps handoff.
+6. Persist session/proposal IDs and queue idempotent writes for transient network failures.
+7. EAS development/TestFlight build, real bundle identifier, and real icons (currently 1×1 placeholders).
 
 Milestone 4 (notifications and private-cohort readiness) has not started beyond the `device_tokens` and `notification_deliveries` tables and must not begin until Milestone 3 is complete. Start any of this work only when the user asks, and keep each change reviewable.
 
@@ -67,7 +77,7 @@ Milestone 4 (notifications and private-cohort readiness) has not started beyond 
 - Another is ambiguous weak feedback, not a strong cuisine rejection.
 - Not today is timing feedback only.
 - Only confirmed, positively rated, previously unvisited restaurants count toward the North Star.
-- Maps-only handoff in phase one.
+- Maps-only handoff in phase one (Google Maps, D021).
 - No delivery, ordering, background location (foreground use-time location only, D017), calendar access, social features, RAG, agents, or public-launch work.
 - Mobile writes must be idempotent; state transitions must be transactional.
 - Never log precise coordinates, access tokens, or email addresses.
