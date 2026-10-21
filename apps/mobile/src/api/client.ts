@@ -9,6 +9,8 @@ import type {
   Context,
   ContextCreate,
   OnboardingPlace,
+  PlaceState,
+  PlaceStateValue,
   Progress,
   ResponseAction,
   ResponseResult,
@@ -82,10 +84,24 @@ export class NoshClient {
     return this.request(`/v1/contexts/${contextId}/onboarding-places?limit=${limit}`);
   }
 
-  setPlaceState(
+  /**
+   * Onboarding classification (Been / Not been / Not interested).  Records
+   * source='onboarding'; Been permanently marks the place as visited before
+   * Nosh so it never counts toward the North Star.
+   */
+  classifyOnboardingPlace(
+    contextId: string,
     placeId: string,
-    state: 'visited' | 'not_interested' | 'unknown',
-  ): Promise<{ place_id: string; state: string; source: string }> {
+    state: PlaceStateValue,
+  ): Promise<PlaceState> {
+    return this.request(`/v1/contexts/${contextId}/onboarding-places/${placeId}/state`, {
+      method: 'PUT',
+      body: JSON.stringify({ state }),
+    });
+  }
+
+  /** Manual place-state edit (settings).  Never marks a place as pre-Nosh. */
+  setPlaceState(placeId: string, state: PlaceStateValue): Promise<PlaceState> {
     return this.request(`/v1/places/${placeId}/state`, {
       method: 'PUT',
       body: JSON.stringify({ state }),

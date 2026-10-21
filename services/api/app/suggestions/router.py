@@ -54,12 +54,12 @@ async def respond_to_proposal(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> schemas.ResponseResult:
-    session, resp, next_proposal = await service.record_response(
+    outcome = await service.record_response(
         db, proposal_id, current_user, body.response, body.client_event_id
     )
     return schemas.ResponseResult(
-        response=resp.response,
-        session_state=session.state,
-        next_proposal=next_proposal,
-        no_candidates=session.state == "exhausted",
+        response=outcome.response.response,
+        session_state=outcome.session_state,
+        next_proposal=outcome.next_proposal,
+        no_candidates=outcome.no_candidates,
     )

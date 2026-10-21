@@ -2,7 +2,7 @@
 
 - **Status:** Phase-one baseline
 - **Version:** 0.1
-- **Last updated:** 2026-10-12
+- **Last updated:** 2026-10-16
 - **Product name:** Nosh
 
 ## 1. Product summary
@@ -94,7 +94,9 @@ Phase one is not designed for restaurants, delivery couriers, large social group
 
 - Create, edit, disable, and delete a named context.
 - Required fields: name, map point, radius, meal type, local time window, active days, and time zone.
+- The local time window must end after it starts on the same day; overnight windows are not supported in phase one (D016).
 - Support at least two contexts per user, such as Office Lunch and Home Dinner.
+- At use time, default to the device's current foreground location; use the context's saved map point as the anchor and fallback when permission or location is unavailable (D017).
 - Do not collect continuous or background location.
 
 ### F3. Onboarding history
@@ -103,6 +105,7 @@ Phase one is not designed for restaurants, delivery couriers, large social group
 - Let the user mark Been, Not been, or Not interested.
 - Allow onboarding to be skipped and resumed.
 - Never count a restaurant as visited solely because it appeared during onboarding.
+- A restaurant marked Been during onboarding was visited before Nosh and never counts toward the North Star, even after a later Nosh visit (D018).
 
 ### F4. Place catalog
 

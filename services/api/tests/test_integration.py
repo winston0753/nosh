@@ -666,11 +666,12 @@ async def test_progress_excludes_pre_nosh_onboarding_place(client, db):
     ob = await client.get(f"/v1/contexts/{ctx['id']}/onboarding-places", headers=_AUTH)
     assert ob.status_code == 200, ob.text
     pre_nosh_place_id = ob.json()[0]["place"]["id"]
-    await client.put(
-        f"/v1/places/{pre_nosh_place_id}/state",
+    classified = await client.put(
+        f"/v1/contexts/{ctx['id']}/onboarding-places/{pre_nosh_place_id}/state",
         json={"state": "visited"},
         headers=_AUTH,
     )
+    assert classified.status_code == 200, classified.text
 
     # Get a session that proposes a different restaurant (not the pre-Nosh one).
     sess_resp = await client.post(
@@ -840,16 +841,34 @@ async def test_product_data_deletion_removes_contexts(client, db):
 
 @pytest.mark.integration
 async def test_session_key_format_accepted(client, db):
+    """Keys whose meal type matches the context are accepted for any real date."""
     await _seed_fixtures(db)
-    ctx = await _make_context(client)
-
-    for key in ("2026-01-01#lunch", "2026-12-31#dinner", "2026-02-28#brunch"):
+    for meal in ("lunch", "dinner", "brunch"):
         resp = await client.post(
-            "/v1/suggestion-sessions",
-            json={"dining_context_id": ctx["id"], "meal_window_key": key},
+            "/v1/contexts",
+            json={
+                "name": f"Test {meal}",
+                "meal_type": meal,
+                "longitude": -122.419,
+                "latitude": 37.759,
+                "radius_meters": 5000,
+                "local_window_start": "11:00",
+                "local_window_end": "14:00",
+                "time_zone": "America/Los_Angeles",
+                "active_days": [0, 1, 2, 3, 4, 5, 6],
+            },
             headers=_AUTH,
         )
-        assert resp.status_code == 201, f"Failed for key={key}: {resp.text}"
+        assert resp.status_code == 201, resp.text
+        ctx = resp.json()
+        for date in ("2026-01-01", "2026-12-31", "2028-02-29"):
+            key = f"{date}#{meal}"
+            resp = await client.post(
+                "/v1/suggestion-sessions",
+                json={"dining_context_id": ctx["id"], "meal_window_key": key},
+                headers=_AUTH,
+            )
+            assert resp.status_code == 201, f"Failed for key={key}: {resp.text}"
 
 
 # ---------------------------------------------------------------------------
@@ -973,9 +992,9 @@ async def test_concurrent_identical_response_idempotent(
     async def attempt() -> uuid.UUID:
         async with committing_factory() as db_session:
             await barrier.wait()  # both reach here before either inserts
-            _, resp, _ = await record_response(db_session, proposal_id, setup_user, "go", event_id)
+            outcome = await record_response(db_session, proposal_id, setup_user, "go", event_id)
             await db_session.commit()
-            return resp.id
+            return outcome.response.id
 
     # Both must succeed — no exceptions are acceptable here.
     id1, id2 = await asyncio.gather(attempt(), attempt())
@@ -1026,9 +1045,9 @@ async def test_concurrent_conflicting_responses_one_wins(
         try:
             async with committing_factory() as db_session:
                 await barrier.wait()
-                _, resp, _ = await record_response(db_session, proposal_id, setup_user, action, eid)
+                outcome = await record_response(db_session, proposal_id, setup_user, action, eid)
                 await db_session.commit()
-                return (action, resp.response)
+                return (action, outcome.response.response)
         except Exception as exc:
             # Captured for exact assertions below; any non-ConflictError fails.
             return (action, exc)
@@ -1184,3 +1203,728 @@ async def test_concurrent_session_creation_idempotent(concurrent_setup, committi
             .all()
         )
     assert len(rows) == 1, f"Expected 1 session row, got {len(rows)}"
+
+
+# ===========================================================================
+# Correctness hardening (2026-10-16)
+# ===========================================================================
+
+
+def _fresh_user() -> tuple[uuid.UUID, dict[str, str]]:
+    """A user with no prior rows, so exact-value assertions cannot see leftovers."""
+    uid = uuid.uuid4()
+    return uid, {"Authorization": f"Bearer {uid}"}
+
+
+async def _new_session(client: AsyncClient, ctx: dict, key: str, headers: dict) -> dict:
+    resp = await client.post(
+        "/v1/suggestion-sessions",
+        json={"dining_context_id": ctx["id"], "meal_window_key": key},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _go_and_confirm(client: AsyncClient, proposal: dict, rating: str, headers: dict) -> dict:
+    go = await client.post(
+        f"/v1/proposals/{proposal['id']}/responses",
+        json={"response": "go", "client_event_id": f"go-{proposal['id']}"},
+        headers=headers,
+    )
+    assert go.status_code == 201, go.text
+    visit = await client.post(
+        "/v1/visits",
+        json={
+            "place_id": proposal["place_id"],
+            "proposal_id": proposal["id"],
+            "visited_at": "2026-10-12T19:00:00Z",
+            "rating": rating,
+        },
+        headers=headers,
+    )
+    assert visit.status_code == 201, visit.text
+    return visit.json()
+
+
+async def _place_state(db: AsyncSession, user_id: uuid.UUID, place_id: str):
+    from sqlalchemy import select
+
+    from app.places.models import UserPlaceState
+
+    result = await db.execute(
+        select(UserPlaceState)
+        .where(
+            UserPlaceState.user_id == user_id,
+            UserPlaceState.place_id == uuid.UUID(place_id),
+        )
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _primary_cuisine(db: AsyncSession, place_id: str) -> uuid.UUID:
+    from sqlalchemy import select
+
+    from app.places.models import PlaceCuisine
+
+    result = await db.execute(
+        select(PlaceCuisine.cuisine_id).where(
+            PlaceCuisine.place_id == uuid.UUID(place_id), PlaceCuisine.is_primary.is_(True)
+        )
+    )
+    return result.scalar_one()
+
+
+# ---------------------------------------------------------------------------
+# Onboarding provenance
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_onboarding_been_then_nosh_visit_same_place_excluded_from_north_star(client, db):
+    """The SAME restaurant: proposed by Nosh, classified Been during (resumed)
+    onboarding, then accepted with Go and confirmed positive.  It must stay
+    pre-Nosh and never count toward confirmed positive NEW restaurants."""
+    await _seed_fixtures(db)
+    uid, auth = _fresh_user()
+    ctx = await _make_context(client, headers=auth)
+
+    proposal = (await _new_session(client, ctx, "2026-10-12#dinner", auth))["current_proposal"]
+    place_id = proposal["place_id"]
+
+    classified = await client.put(
+        f"/v1/contexts/{ctx['id']}/onboarding-places/{place_id}/state",
+        json={"state": "visited"},
+        headers=auth,
+    )
+    assert classified.status_code == 200, classified.text
+    assert classified.json() == {
+        "place_id": place_id,
+        "state": "visited",
+        "source": "onboarding",
+        "was_visited_before_nosh": True,
+    }
+
+    await _go_and_confirm(client, proposal, "positive", auth)
+
+    row = await _place_state(db, uid, place_id)
+    assert row is not None
+    assert row.state == "visited"
+    assert row.source == "confirmation"
+    assert row.was_visited_before_nosh is True, "confirmation must not erase provenance"
+
+    progress = (await client.get("/v1/progress", headers=auth)).json()
+    assert progress == [
+        {"month": "2026-10", "confirmed_positive_new_count": 0, "total_confirmed_count": 1}
+    ]
+
+
+@pytest.mark.integration
+async def test_onboarding_provenance_survives_reclassification_and_manual_edits(client, db):
+    await _seed_fixtures(db)
+    uid, auth = _fresh_user()
+    ctx = await _make_context(client, headers=auth)
+    place_id = (
+        await client.get(f"/v1/contexts/{ctx['id']}/onboarding-places", headers=auth)
+    ).json()[0]["place"]["id"]
+    url = f"/v1/contexts/{ctx['id']}/onboarding-places/{place_id}/state"
+
+    assert (await client.put(url, json={"state": "visited"}, headers=auth)).status_code == 200
+    for state in ("unknown", "not_interested"):
+        r = await client.put(url, json={"state": state}, headers=auth)
+        assert r.status_code == 200, r.text
+        assert r.json()["was_visited_before_nosh"] is True
+    manual = await client.put(
+        f"/v1/places/{place_id}/state", json={"state": "unknown"}, headers=auth
+    )
+    assert manual.status_code == 200, manual.text
+    assert manual.json()["source"] == "manual"
+    assert manual.json()["was_visited_before_nosh"] is True
+
+    # A later manual-logged positive visit to that place is still not "new".
+    visit = await client.post(
+        "/v1/visits",
+        json={
+            "place_id": place_id,
+            "visited_at": "2026-10-14T19:00:00Z",
+            "rating": "positive",
+            "confirmation_source": "manual",
+        },
+        headers=auth,
+    )
+    assert visit.status_code == 201, visit.text
+    progress = (await client.get("/v1/progress", headers=auth)).json()
+    assert sum(m["confirmed_positive_new_count"] for m in progress) == 0
+
+
+@pytest.mark.integration
+async def test_manual_place_state_never_marks_pre_nosh(client, db):
+    await _seed_fixtures(db)
+    uid, auth = _fresh_user()
+    ctx = await _make_context(client, headers=auth)
+    proposal = (await _new_session(client, ctx, "2026-10-12#dinner", auth))["current_proposal"]
+
+    manual = await client.put(
+        f"/v1/places/{proposal['place_id']}/state", json={"state": "visited"}, headers=auth
+    )
+    assert manual.status_code == 200, manual.text
+    assert manual.json()["source"] == "manual"
+    assert manual.json()["was_visited_before_nosh"] is False
+
+
+@pytest.mark.integration
+async def test_onboarding_classification_negative_paths(client, db):
+    await _seed_fixtures(db)
+    uid, auth = _fresh_user()
+    _, other_auth = _fresh_user()
+    ctx = await _make_context(client, headers=auth)
+    place_id = (
+        await client.get(f"/v1/contexts/{ctx['id']}/onboarding-places", headers=auth)
+    ).json()[0]["place"]["id"]
+
+    # Nonexistent place → stable 404.
+    r = await client.put(
+        f"/v1/contexts/{ctx['id']}/onboarding-places/{uuid.uuid4()}/state",
+        json={"state": "visited"},
+        headers=auth,
+    )
+    assert r.status_code == 404 and r.json()["code"] == "not_found", r.text
+
+    # Nonexistent context → 404; another user's context → 403.
+    r = await client.put(
+        f"/v1/contexts/{uuid.uuid4()}/onboarding-places/{place_id}/state",
+        json={"state": "visited"},
+        headers=auth,
+    )
+    assert r.status_code == 404 and r.json()["code"] == "not_found", r.text
+    r = await client.put(
+        f"/v1/contexts/{ctx['id']}/onboarding-places/{place_id}/state",
+        json={"state": "visited"},
+        headers=other_auth,
+    )
+    assert r.status_code == 403 and r.json()["code"] == "forbidden", r.text
+
+    # A place that onboarding would never present for this context → 422.
+    far = await client.post(
+        "/v1/contexts",
+        json={
+            "name": "Far away",
+            "meal_type": "dinner",
+            "longitude": -73.98,
+            "latitude": 40.75,
+            "radius_meters": 500,
+            "local_window_start": "18:00",
+            "local_window_end": "21:00",
+            "time_zone": "America/New_York",
+        },
+        headers=auth,
+    )
+    assert far.status_code == 201, far.text
+    r = await client.put(
+        f"/v1/contexts/{far.json()['id']}/onboarding-places/{place_id}/state",
+        json={"state": "visited"},
+        headers=auth,
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["code"] == "place_not_in_context"
+    assert await _place_state(db, uid, place_id) is None
+
+    # Invalid state value → schema validation error.
+    r = await client.put(
+        f"/v1/contexts/{ctx['id']}/onboarding-places/{place_id}/state",
+        json={"state": "loved_it"},
+        headers=auth,
+    )
+    assert r.status_code == 422 and r.json()["code"] == "validation_error", r.text
+
+
+@pytest.mark.integration
+async def test_nonexistent_place_returns_stable_404(client, db):
+    _, auth = _fresh_user()
+    missing = uuid.uuid4()
+    r = await client.put(f"/v1/places/{missing}/state", json={"state": "visited"}, headers=auth)
+    assert r.status_code == 404, r.text
+    assert r.json()["code"] == "not_found"
+
+    r = await client.post(
+        "/v1/visits",
+        json={
+            "place_id": str(missing),
+            "visited_at": "2026-10-12T19:00:00Z",
+            "rating": "positive",
+            "confirmation_source": "manual",
+        },
+        headers=auth,
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["code"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# Recommendation priors and history provenance (service level)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_cuisine_stats_without_onboarding_history_are_neutral(client, db):
+    from app.recommendations.engine import _beta_params
+    from app.suggestions.service import _load_cuisine_stats
+
+    await _seed_fixtures(db)
+    uid, _ = _fresh_user()
+    stats = await _load_cuisine_stats(db, uid)
+    assert stats, "every catalog cuisine must be represented"
+    for s in stats.values():
+        assert s.history_frequency is None
+        assert _beta_params(s) == (1.0, 1.0)
+
+
+@pytest.mark.integration
+async def test_cuisine_stats_history_only_from_onboarding_and_outcomes_only_from_proposals(
+    client, db
+):
+    from app.suggestions.service import _load_cuisine_stats
+
+    await _seed_fixtures(db)
+    uid, auth = _fresh_user()
+    ctx = await _make_context(client, headers=auth)
+
+    # 1. Pre-Nosh history: one onboarding Been.
+    onboarding = (
+        await client.get(f"/v1/contexts/{ctx['id']}/onboarding-places", headers=auth)
+    ).json()
+    been_id = onboarding[0]["place"]["id"]
+    r = await client.put(
+        f"/v1/contexts/{ctx['id']}/onboarding-places/{been_id}/state",
+        json={"state": "visited"},
+        headers=auth,
+    )
+    assert r.status_code == 200, r.text
+    been_cuisine = await _primary_cuisine(db, been_id)
+
+    stats = await _load_cuisine_stats(db, uid)
+    assert stats[been_cuisine].history_frequency == 1.0
+    assert all(s.history_frequency == 0.0 for c, s in stats.items() if c != been_cuisine)
+    assert all(
+        s.confirmed_positive_visits == 0 and s.confirmed_negative_visits == 0
+        for s in stats.values()
+    )
+
+    # 2. Later Nosh visits: one positive, one negative.
+    p1 = (await _new_session(client, ctx, "2026-10-12#dinner", auth))["current_proposal"]
+    await _go_and_confirm(client, p1, "positive", auth)
+    p2 = (await _new_session(client, ctx, "2026-10-13#dinner", auth))["current_proposal"]
+    await _go_and_confirm(client, p2, "negative", auth)
+    assert len({been_id, p1["place_id"], p2["place_id"]}) == 3
+
+    # 3. A manual visit (no proposal) must not update cuisine preference (D015).
+    manual_place = next(
+        p["place"]["id"]
+        for p in onboarding
+        if p["place"]["id"] not in {been_id, p1["place_id"], p2["place_id"]}
+    )
+    r = await client.post(
+        "/v1/visits",
+        json={
+            "place_id": manual_place,
+            "visited_at": "2026-10-14T19:00:00Z",
+            "rating": "positive",
+            "confirmation_source": "manual",
+        },
+        headers=auth,
+    )
+    assert r.status_code == 201, r.text
+
+    after = await _load_cuisine_stats(db, uid)
+    # History is unchanged: post-Nosh visits are never onboarding history.
+    for cid, s in after.items():
+        assert s.history_frequency == stats[cid].history_frequency
+
+    c1 = await _primary_cuisine(db, p1["place_id"])
+    c2 = await _primary_cuisine(db, p2["place_id"])
+    expected_pos = {c1: 1}
+    expected_neg = {c2: 1}
+    for cid, s in after.items():
+        assert s.confirmed_positive_visits == expected_pos.get(cid, 0), cid
+        assert s.confirmed_negative_visits == expected_neg.get(cid, 0), cid
+
+
+# ---------------------------------------------------------------------------
+# Dining-context and meal-window validation (stored-context paths)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_patch_context_rejects_window_inconsistent_with_stored_bounds(client, db):
+    _, auth = _fresh_user()
+    ctx = await _make_context(client, headers=auth)  # 18:00–21:00
+    url = f"/v1/contexts/{ctx['id']}"
+
+    for body in (
+        {"local_window_end": "17:00"},
+        {"local_window_start": "21:30"},
+        {"local_window_start": "21:00"},
+        {"local_window_start": "22:00", "local_window_end": "02:00"},
+    ):
+        r = await client.patch(url, json=body, headers=auth)
+        assert r.status_code == 422, (body, r.text)
+        assert r.json()["code"] == "validation_error"
+        assert r.json()["field"] == "local_window_end"
+
+    unchanged = next(
+        c for c in (await client.get("/v1/contexts", headers=auth)).json() if c["id"] == ctx["id"]
+    )
+    assert unchanged["version"] == ctx["version"]
+    assert (unchanged["local_window_start"], unchanged["local_window_end"]) == ("18:00", "21:00")
+
+    ok = await client.patch(url, json={"local_window_start": "17:00"}, headers=auth)
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["version"] == ctx["version"] + 1
+
+
+@pytest.mark.integration
+async def test_session_key_must_match_context(client, db):
+    await _seed_fixtures(db)
+    _, auth = _fresh_user()
+    resp = await client.post(
+        "/v1/contexts",
+        json={
+            "name": "Weekday dinner",
+            "meal_type": "dinner",
+            "longitude": -122.419,
+            "latitude": 37.759,
+            "radius_meters": 5000,
+            "local_window_start": "18:00",
+            "local_window_end": "21:00",
+            "time_zone": "America/Los_Angeles",
+            "active_days": [0, 1, 2, 3, 4],
+        },
+        headers=auth,
+    )
+    assert resp.status_code == 201, resp.text
+    ctx = resp.json()
+
+    for key in (
+        "2026-10-12#lunch",  # meal type mismatch (Monday)
+        "2026-10-12#brunch",  # meal type mismatch
+        "2026-10-11#dinner",  # Sunday: inactive day
+        "2026-10-17#dinner",  # Saturday: inactive day
+        "2026-02-30#dinner",  # impossible date
+        "2026-00-10#dinner",  # impossible month
+    ):
+        r = await client.post(
+            "/v1/suggestion-sessions",
+            json={"dining_context_id": ctx["id"], "meal_window_key": key},
+            headers=auth,
+        )
+        assert r.status_code == 422, (key, r.text)
+        assert r.json()["code"] == "validation_error"
+        assert r.json()["field"] == "meal_window_key"
+
+    ok = await client.post(
+        "/v1/suggestion-sessions",
+        json={"dining_context_id": ctx["id"], "meal_window_key": "2026-10-12#dinner"},
+        headers=auth,
+    )
+    assert ok.status_code == 201, ok.text
+
+
+@pytest.mark.integration
+async def test_session_rejected_for_legacy_context_with_invalid_schedule(client, db):
+    """Rows written before strict validation cannot open a suggestion session."""
+    from app.contexts.models import DiningContext
+
+    uid, auth = _fresh_user()
+    for tz, start, end in (
+        ("Not/AZone", "18:00", "21:00"),
+        ("America/Los_Angeles", "22:00", "02:00"),
+        ("America/Los_Angeles", "25:99", "26:00"),
+    ):
+        legacy = DiningContext(
+            user_id=uid,
+            name="Legacy",
+            meal_type="dinner",
+            location="SRID=4326;POINT(-122.419 37.759)",
+            radius_meters=1600,
+            local_window_start=start,
+            local_window_end=end,
+            time_zone=tz,
+            active_days=[0, 1, 2, 3, 4, 5, 6],
+        )
+        db.add(legacy)
+        await db.flush()
+        r = await client.post(
+            "/v1/suggestion-sessions",
+            json={"dining_context_id": str(legacy.id), "meal_window_key": "2026-10-12#dinner"},
+            headers=auth,
+        )
+        assert r.status_code == 422, (tz, start, end, r.text)
+        assert r.json()["code"] == "validation_error"
+
+
+# ---------------------------------------------------------------------------
+# Visit-history pagination
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_visit_history_pagination_is_deterministic_with_timestamp_ties(client, db):
+    from app.places.fixtures import PLACES
+
+    await _seed_fixtures(db)
+    _, auth = _fresh_user()
+    created: list[dict] = []
+    # Five visits sharing one timestamp plus one earlier and one later.
+    stamps = ["2026-10-12T19:00:00Z"] * 5 + ["2026-10-11T19:00:00Z", "2026-10-13T19:00:00Z"]
+    for place, stamp in zip(PLACES, stamps, strict=False):
+        r = await client.post(
+            "/v1/visits",
+            json={
+                "place_id": str(place.id),
+                "visited_at": stamp,
+                "rating": "positive",
+                "confirmation_source": "manual",
+            },
+            headers=auth,
+        )
+        assert r.status_code == 201, r.text
+        created.append(r.json())
+
+    seen: list[str] = []
+    cursor: str | None = None
+    for _ in range(10):
+        params = {"limit": 2, **({"cursor": cursor} if cursor else {})}
+        page = (await client.get("/v1/visits", params=params, headers=auth)).json()
+        if not page:
+            break
+        seen += [v["id"] for v in page]
+        cursor = page[-1]["id"]
+
+    assert len(seen) == len(set(seen)) == len(created), "no visit skipped or repeated"
+    expected = sorted(created, key=lambda v: (v["visited_at"], uuid.UUID(v["id"])), reverse=True)
+    assert seen == [v["id"] for v in expected]
+
+
+@pytest.mark.integration
+async def test_visit_history_cursor_owned_by_other_user_rejected(client, db):
+    from app.places.fixtures import PLACES
+
+    await _seed_fixtures(db)
+    _, auth = _fresh_user()
+    _, other = _fresh_user()
+    r = await client.post(
+        "/v1/visits",
+        json={
+            "place_id": str(PLACES[0].id),
+            "visited_at": "2026-10-12T19:00:00Z",
+            "rating": "positive",
+            "confirmation_source": "manual",
+        },
+        headers=auth,
+    )
+    page = await client.get("/v1/visits", params={"cursor": r.json()["id"]}, headers=other)
+    assert page.status_code == 404, page.text
+    assert page.json()["code"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# Idempotent replay of Another
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_another_replay_returns_original_next_proposal(client, db):
+    await _seed_fixtures(db)
+    _, auth = _fresh_user()
+    ctx = await _make_context(client, headers=auth)
+    created = await _new_session(client, ctx, "2026-10-12#dinner", auth)
+    original_session_id = created["id"]
+    first = created["current_proposal"]
+    url = f"/v1/proposals/{first['id']}/responses"
+    body = {"response": "another", "client_event_id": f"another-{uuid.uuid4()}"}
+
+    original = await client.post(url, json=body, headers=auth)
+    assert original.status_code == 201, original.text
+    assert original.json()["next_proposal"] is not None
+    assert original.json()["session_state"] == "active"
+
+    replay = await client.post(url, json=body, headers=auth)
+    assert replay.status_code == 201, replay.text
+    assert replay.json() == original.json()
+
+    # Same action under a different event id is also equivalent.
+    other_event = await client.post(
+        url,
+        json={"response": "another", "client_event_id": f"another-{uuid.uuid4()}"},
+        headers=auth,
+    )
+    assert other_event.status_code == 201, other_event.text
+    assert other_event.json() == original.json()
+
+    # Even after the session moves on (Go on the next proposal), a late retry of
+    # the Another still returns what the original request returned.
+    await _go_and_confirm(client, original.json()["next_proposal"], "positive", auth)
+    late = await client.post(url, json=body, headers=auth)
+    assert late.status_code == 201, late.text
+    assert late.json() == original.json()
+
+    # Replays generated no extra proposal: the session holds exactly two.
+    from sqlalchemy import func, select
+
+    from app.suggestions.models import Proposal
+
+    count = await db.execute(
+        select(func.count())
+        .select_from(Proposal)
+        .where(Proposal.suggestion_session_id == uuid.UUID(original_session_id))
+    )
+    assert count.scalar_one() == 2
+
+
+@pytest.mark.integration
+async def test_another_replay_after_exhaustion_is_equivalent(client, db):
+    await _seed_fixtures(db)
+    _, auth = _fresh_user()
+    ctx = await _make_context(client, headers=auth)
+    proposal = (await _new_session(client, ctx, "2026-10-12#dinner", auth))["current_proposal"]
+
+    last: tuple[str, dict, dict] | None = None
+    for i in range(40):
+        body = {"response": "another", "client_event_id": f"exhaust-{i}-{uuid.uuid4()}"}
+        url = f"/v1/proposals/{proposal['id']}/responses"
+        r = await client.post(url, json=body, headers=auth)
+        assert r.status_code == 201, r.text
+        last = (url, body, r.json())
+        if r.json()["no_candidates"]:
+            break
+        proposal = r.json()["next_proposal"]
+    assert last is not None
+    url, body, original = last
+    assert original == {
+        "response": "another",
+        "session_state": "exhausted",
+        "next_proposal": None,
+        "no_candidates": True,
+    }
+    replay = await client.post(url, json=body, headers=auth)
+    assert replay.status_code == 201, replay.text
+    assert replay.json() == original
+
+
+@pytest.mark.integration
+async def test_another_replay_by_other_user_forbidden(client, db):
+    await _seed_fixtures(db)
+    _, auth = _fresh_user()
+    _, other = _fresh_user()
+    ctx = await _make_context(client, headers=auth)
+    first = (await _new_session(client, ctx, "2026-10-12#dinner", auth))["current_proposal"]
+    url = f"/v1/proposals/{first['id']}/responses"
+    body = {"response": "another", "client_event_id": f"another-{uuid.uuid4()}"}
+    assert (await client.post(url, json=body, headers=auth)).status_code == 201
+    r = await client.post(url, json=body, headers=other)
+    assert r.status_code == 403 and r.json()["code"] == "forbidden", r.text
+
+
+# ---------------------------------------------------------------------------
+# Concurrent first-time user_place_states writes
+# ---------------------------------------------------------------------------
+
+
+_RACE_ROUNDS = 10
+
+
+async def _clear_place_states(committing_factory, user_id: uuid.UUID) -> None:
+    from sqlalchemy import delete
+
+    from app.places.models import UserPlaceState
+
+    async with committing_factory() as session:
+        await session.execute(delete(UserPlaceState).where(UserPlaceState.user_id == user_id))
+        await session.commit()
+
+
+async def _place_state_rows(committing_factory, user_id: uuid.UUID, place_id: uuid.UUID) -> list:
+    from sqlalchemy import select
+
+    from app.places.models import UserPlaceState
+
+    async with committing_factory() as check_db:
+        result = await check_db.execute(
+            select(UserPlaceState).where(
+                UserPlaceState.user_id == user_id, UserPlaceState.place_id == place_id
+            )
+        )
+        return list(result.scalars().all())
+
+
+@pytest.mark.integration
+async def test_concurrent_first_onboarding_classification_atomic(
+    concurrent_setup, committing_factory
+) -> None:
+    """Two simultaneous first-time onboarding writes for one (user, place) both
+    succeed and leave exactly one row.
+
+    Repeated because the first round on cold connections rarely overlaps; the
+    pre-fix SELECT-then-INSERT failed with a primary-key IntegrityError in
+    nearly every later round.
+    """
+    from app.places.service import classify_onboarding_place
+
+    setup_user, context_id, _, _, place_id = concurrent_setup
+
+    for _ in range(_RACE_ROUNDS):
+        await _clear_place_states(committing_factory, setup_user)
+        barrier = asyncio.Barrier(2)
+
+        async def attempt(barrier: asyncio.Barrier) -> bool:
+            async with committing_factory() as session:
+                await barrier.wait()
+                row = await classify_onboarding_place(
+                    session, setup_user, context_id, place_id, "visited"
+                )
+                return row.was_visited_before_nosh
+
+        flags = await asyncio.gather(attempt(barrier), attempt(barrier))
+        assert flags == [True, True]
+
+        rows = await _place_state_rows(committing_factory, setup_user, place_id)
+        assert len(rows) == 1
+        assert rows[0].was_visited_before_nosh is True
+
+
+@pytest.mark.integration
+async def test_concurrent_onboarding_and_confirmation_keep_provenance(
+    concurrent_setup, committing_factory
+) -> None:
+    """An onboarding Been racing a confirmation write for the same new
+    (user, place): both succeed and pre-Nosh provenance survives either order."""
+    from app.places.service import classify_onboarding_place, upsert_user_place_state
+
+    setup_user, context_id, _, _, place_id = concurrent_setup
+
+    for _ in range(_RACE_ROUNDS):
+        await _clear_place_states(committing_factory, setup_user)
+        barrier = asyncio.Barrier(2)
+
+        async def onboarding(barrier: asyncio.Barrier) -> None:
+            async with committing_factory() as session:
+                await barrier.wait()
+                await classify_onboarding_place(
+                    session, setup_user, context_id, place_id, "visited"
+                )
+
+        async def confirmation(barrier: asyncio.Barrier) -> None:
+            async with committing_factory() as session:
+                await barrier.wait()
+                await upsert_user_place_state(
+                    session, setup_user, place_id, "visited", "confirmation"
+                )
+                await session.commit()
+
+        await asyncio.gather(onboarding(barrier), confirmation(barrier))
+
+        rows = await _place_state_rows(committing_factory, setup_user, place_id)
+        assert len(rows) == 1
+        assert rows[0].state == "visited"
+        assert rows[0].was_visited_before_nosh is True

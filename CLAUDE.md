@@ -24,9 +24,9 @@ Read these before changing code:
 
 Root documents are canonical. Files under `docs/` are historical research.
 
-## Current state (as of 2026-10-13)
+## Current state (as of 2026-10-16)
 
-Checkpoint: **Milestone 0.1 — Working Local Foundation.** The local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. This is suitable for a source-control checkpoint; it is **not** ready for TestFlight or external testers.
+Checkpoint: **Milestone 0.1 — Working Local Foundation**, merged to `main` via PR #1, plus a correctness-hardening pass (branch `milestone-0.1-correctness-hardening`; see `notes.md` 2026-10-16). The local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. This is suitable for source control; it is **not** ready for TestFlight or external testers.
 
 | Milestone | Status |
 |---|---|
@@ -40,14 +40,16 @@ Checkpoint: **Milestone 0.1 — Working Local Foundation.** The local database, 
 - **Backend:** FastAPI modular monolith in `services/api/` (own uv project, `nosh-api`), SQLAlchemy 2 async + asyncpg, Alembic migrations `0001`–`0004`, `/health/live`, `/health/ready`, OpenAPI, deterministic `policy_v0` engine, suggestion sessions with Go / Another / Not today, visit confirmation, rating, correction, history, progress, and product-data deletion.
 - **Database:** Docker Compose PostGIS 16-3.4. `db` (port 5432, `nosh_dev`) is persistent development data; `db_test` (port 5433, `nosh_test`, `--profile test`) is disposable. pgvector is intentionally absent (D013).
 - **Mobile:** Expo SDK 53 app in `apps/mobile/` with Expo Router `~5.1.11`, React Native 0.79, strict TypeScript, TanStack Query, and Apple Maps handoff. Do not upgrade or downgrade Expo, React Native, or Expo Router without a recorded decision.
-- **Tests:** 12 root spike tests, 68 API unit tests, 29 PostgreSQL integration tests (including 4 genuine concurrent-database tests), and 36 mobile Jest tests.
+- **Jobs:** batch jobs live in `services/api/jobs/` and import the app as `app`; run from `services/api` with `uv run --frozen python -m jobs.ingest_places.importer`.
+- **Contracts added by the hardening pass:** onboarding classification via `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state` (D018); strict context/meal-window validation with `422 validation_error` (D016); atomic `user_place_states` upserts; replay-equivalent responses; `(visited_at, id)` visit pagination.
+- **Tests:** 12 root spike tests, 148 API unit tests, 46 PostgreSQL integration tests (including 6 genuine concurrent-database tests), and 43 mobile Jest tests.
 
 ## Next: complete Milestone 3
 
 Milestone 3 remains incomplete because:
 
 1. Mobile authentication is only a local UUID adapter; Supabase passwordless email authentication is not implemented in the app.
-2. Context creation hardcodes the SF Mission coordinate, a 1,600-meter radius, and every active day; users cannot select location, radius, or notification days as `PRODUCT.md` requires.
+2. Context creation hardcodes the SF Mission coordinate, a 1,600-meter radius, and every active day; users cannot select location, radius, or notification days as `PRODUCT.md` requires. Location should default to foreground current location at use time with the saved anchor as fallback (D017); background location remains banned.
 3. The current suggestion is not persisted for offline use.
 4. Idempotent response writes are not queued during transient network failures.
 5. No EAS development/TestFlight build is configured.
@@ -59,14 +61,14 @@ Milestone 4 (notifications and private-cohort readiness) has not started beyond 
 
 - Expo React Native with strict TypeScript for mobile.
 - FastAPI modular monolith for the backend.
-- PostgreSQL with PostGIS; pgvector remains unused in phase one.
+- PostgreSQL with PostGIS; pgvector is deferred and absent in phase one (D013).
 - Deterministic, versioned recommendation code with no LLM dependency in the meal-time path.
 - Go is intent, not a visit.
 - Another is ambiguous weak feedback, not a strong cuisine rejection.
 - Not today is timing feedback only.
 - Only confirmed, positively rated, previously unvisited restaurants count toward the North Star.
 - Maps-only handoff in phase one.
-- No delivery, ordering, background location, calendar access, social features, RAG, agents, or public-launch work.
+- No delivery, ordering, background location (foreground use-time location only, D017), calendar access, social features, RAG, agents, or public-launch work.
 - Mobile writes must be idempotent; state transitions must be transactional.
 - Never log precise coordinates, access tokens, or email addresses.
 - Update the canonical documents and `notes.md` when implementation changes a documented contract or completes a material milestone.

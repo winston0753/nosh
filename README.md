@@ -13,11 +13,11 @@ This checkpoint proves that the local database, migrations, API, recommendation 
 | 3 — Expo vertical slice | Partially complete — local vertical slice implemented; tester-readiness work remains |
 | 4 — Notifications and private cohort readiness | Not started; not next |
 
-All local verification gates pass:
+All local verification gates pass (2026-10-16, after the correctness-hardening pass):
 - 12 root spike tests
-- 68 API unit tests (lint, format, strict mypy clean)
-- 29 integration tests (PostGIS + real migrations + 4 concurrent DB tests) — **all pass**
-- 36 mobile Jest tests (TypeScript, ESLint, Expo Doctor 18/18 clean)
+- 148 API unit tests (lint, format, strict mypy clean)
+- 46 integration tests (PostGIS + real migrations + 6 concurrent DB tests) — **all pass**
+- 43 mobile Jest tests (TypeScript, ESLint, Expo Doctor 18/18 clean)
 
 Stack: FastAPI + SQLAlchemy 2 async API; Expo SDK 53 mobile app with Expo Router `~5.1.11`.
 
@@ -80,24 +80,15 @@ cp .env.example .env   # works as-is for local dev (AUTH_LOCAL_DEV=true)
 
 ### 4. Seed fixture restaurants
 
+The place importer is a job inside the API project (`services/api/jobs/`). Its one supported invocation is from `services/api`:
+
 ```bash
-uv run python -c "
-import asyncio, os
-os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://nosh:nosh_dev@localhost:5432/nosh_dev')
-os.environ['AUTH_LOCAL_DEV'] = 'true'
-from app.config import get_settings
-from app.places.service import load_fixture_data
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-async def run():
-    e = create_async_engine(get_settings().async_database_url)
-    factory = async_sessionmaker(e, class_=AsyncSession)
-    async with factory() as db:
-        await load_fixture_data(db)
-    await e.dispose()
-    print('20 fixture restaurants loaded.')
-asyncio.run(run())
-"
+DATABASE_URL=postgresql+asyncpg://nosh:nosh_dev@localhost:5432/nosh_dev \
+  uv run --frozen python -m jobs.ingest_places.importer
+# Fixture data loaded.
 ```
+
+It is idempotent (existing places and cuisines are left unchanged). Jobs import the application as `app`, like the API itself; `tests/test_job_imports.py` fails if any module imports through `services.api.app` or if a job stops importing from this working directory.
 
 ### 5. Start the API
 
@@ -156,7 +147,7 @@ uv run pytest tests/ -q
 ```bash
 cd services/api
 uv run --frozen pytest tests/ -q -m "not integration"
-# Expected: 68 passed
+# Expected: 148 passed
 ```
 
 ### API integration tests (requires PostgreSQL)
@@ -179,7 +170,7 @@ DATABASE_URL=postgresql+asyncpg://nosh:nosh_dev@localhost:5433/nosh_test \
 APP_ENVIRONMENT=test \
 AUTH_LOCAL_DEV=true \
   uv run --frozen pytest tests/ -v -m "integration"
-# Expected: 29 passed (includes 4 genuine concurrent-DB tests)
+# Expected: 46 passed (includes 6 genuine concurrent-DB tests)
 ```
 
 In CI, GitHub Actions maps the postgres service container to port 5432 and sets `DATABASE_URL` accordingly in `ci.yml`.
@@ -190,9 +181,9 @@ The integration test fixture applies migrations automatically before the first t
 
 ```bash
 cd services/api
-uv run ruff check app/ tests/
-uv run ruff format --check app/ tests/
-uv run mypy app/ --strict
+uv run --frozen ruff check app/ jobs/ tests/
+uv run --frozen ruff format --check app/ jobs/ tests/
+uv run --frozen mypy app/ jobs/ --strict
 ```
 
 ### Migration round-trip (always use the disposable test database, port 5433)
@@ -221,7 +212,7 @@ cd apps/mobile
 npm ci
 npm run typecheck       # TypeScript strict
 npm run lint            # ESLint
-npm test -- --runInBand # Jest unit tests (36 tests)
+npm test -- --runInBand # Jest unit tests (43 tests)
 npx expo install --check
 npx expo-doctor
 ```
@@ -245,13 +236,14 @@ git diff --check
 | Go / Another / Not today state machine | Implemented with idempotency |
 | Visit confirmation + rating + history + progress | Implemented |
 | Strict mypy | 0 errors |
-| Mobile app (Expo SDK 53, Expo Router `~5.1.11`) | All MVP screens; TypeScript + ESLint + 36 Jest tests + Expo Doctor pass |
-| Integration tests | 29 tests covering full flow and concurrency; requires PostgreSQL |
+| Mobile app (Expo SDK 53, Expo Router `~5.1.11`) | All MVP screens; TypeScript + ESLint + 43 Jest tests + Expo Doctor pass |
+| Integration tests | 46 tests covering full flow, provenance, validation, replay, pagination, and concurrency; requires PostgreSQL |
+| Place importer | `uv run --frozen python -m jobs.ingest_places.importer` from `services/api` |
 
 ## What is not yet complete
 
 - **End-to-end local flow without Docker:** requires PostgreSQL running.
-- **Mobile authentication (Milestone 3):** the app uses a local UUID adapter only; Supabase passwordless email sign-in is not implemented. The API also needs `SUPABASE_JWT_SECRET` for production auth.
+- **Mobile authentication (Milestone 3):** the app uses a local UUID adapter only; Supabase passwordless email sign-in is not implemented. The app will need only the Supabase project URL and publishable key; the API needs `SUPABASE_URL` and verifies tokens against the project JWKS (no shared JWT secret for new projects).
 - **Context setup (Milestone 3):** context creation hardcodes the SF Mission coordinate, a 1,600 m radius, and every active day; users cannot choose location, radius, or notification days.
 - **Offline resilience (Milestone 3):** the current suggestion is not persisted for offline use, and idempotent response writes are not queued during transient network failures.
 - **EAS/TestFlight build (Milestone 3):** not configured.
@@ -300,16 +292,19 @@ services/api/         FastAPI modular monolith
     suggestions/      Session lifecycle, Go/Another/Not today state machine
     visits/           Confirmation, ratings, history, monthly progress
     core/             Database, errors, async engine
+  jobs/               Batch jobs in the API project (ingest_places importer)
   alembic/            Migrations 0001–0004 (upgrade + downgrade tested)
   tests/
     test_auth.py                30 unit tests
+    test_context_validation.py  70 unit tests (schedule + meal-window rules, API 422s)
     test_health.py              4 unit tests
+    test_job_imports.py         3 unit tests (job import-path guard)
+    test_priors.py              7 unit tests (cuisine prior provenance)
     test_progress_metric.py     8 unit tests
     test_recommendations.py     13 unit tests (engine mechanics)
     test_suggestion_invariants.py  9 invariant tests
     test_state_machine.py       4 documentation tests
-    test_integration.py         29 integration tests (PostgreSQL required)
-jobs/                 Place ingestor scaffold
+    test_integration.py         46 integration tests (PostgreSQL required)
 spike/                Cuisine-policy simulation (preserved, 12 tests)
 tests/                Root spike tests
 db/                   Docker init SQL (PostGIS; pgvector deferred per D013)
@@ -319,8 +314,8 @@ db/                   Docker init SQL (PostGIS; pgvector deferred per D013)
 
 **Complete Milestone 3 — Expo vertical slice (tester readiness)**
 
-1. Supabase passwordless email authentication in the mobile app (replacing the local UUID adapter), with `SUPABASE_JWT_SECRET` configured for the API.
-2. Location, radius, and notification-day selection during context creation.
+1. Supabase passwordless email authentication in the mobile app (replacing the local UUID adapter), configured with the project URL and publishable key; the API validates tokens via `SUPABASE_URL` + JWKS.
+2. Location, radius, and notification-day selection during context creation; foreground current location at use time with the saved anchor as fallback (D017). No background location.
 3. Persist the current suggestion for offline use.
 4. Queue idempotent response writes during transient network failures.
 5. EAS development/TestFlight build configuration.

@@ -1,7 +1,7 @@
 # Nosh Decision Log
 
 - **Status:** Active
-- **Last updated:** 2026-10-12
+- **Last updated:** 2026-10-16
 
 This file records product and architecture decisions that affect multiple parts of the system. Each entry includes the selected option, rejected alternatives, consequences, and conditions for reconsideration.
 
@@ -89,7 +89,7 @@ Module boundaries must remain explicit, but deployment stays simple. A component
 
 ### Decision
 
-Use Supabase for hosted PostgreSQL and passwordless authentication. Enable PostGIS for radius queries and pgvector for future use, while leaving vector retrieval out of phase one.
+Use Supabase for hosted PostgreSQL and passwordless authentication. Enable PostGIS for radius queries. pgvector is deferred and absent in phase one (superseded by D013); vector retrieval is out of scope.
 
 ### Alternatives rejected
 
@@ -99,7 +99,7 @@ Use Supabase for hosted PostgreSQL and passwordless authentication. Enable PostG
 
 ### Consequences
 
-The mobile app authenticates with Supabase, but the FastAPI service owns product writes and recommendation workflows.
+The mobile app authenticates with Supabase using only the project URL and the client-safe publishable key, but the FastAPI service owns product writes and recommendation workflows. FastAPI verifies access tokens against the project's JWKS (asymmetric signing keys) and needs no shared JWT secret; the HS256 `SUPABASE_JWT_SECRET` path remains only for projects still on the legacy secret.
 
 ## D006 — Keep the recommendation core deterministic
 
@@ -280,3 +280,58 @@ The `POST /v1/visits` endpoint accepts `proposal_id=null` for visits the user lo
 ### Consequences
 
 Manual visits count toward visit history and can affect the North Star metric, but they do not influence cuisine preference state (no Beta update) because there is no proposal to link them to a cuisine selection event.  The progress metric already correctly handles this by checking only the confirmed-positive count.
+
+## D016 — Strict dining-context schedules; no overnight windows
+
+- **Status:** Accepted
+- **Date:** 2026-10-16
+
+### Decision
+
+Validate every dining-context schedule on create and update: strict 24-hour `HH:MM` bounds, an IANA time zone that loads, a non-empty list of unique active days 0–6 (0 = Monday), and a window whose end is strictly after its start on the same local day. Overnight windows remain unsupported. Suggestion-session keys (`YYYY-MM-DD#meal_type`) must name a real date on an active day with the context's meal type, and the context's stored schedule must itself be valid. Failures return `422 validation_error` with the offending `field`.
+
+### Alternatives rejected
+
+- **Accept overnight windows:** a late-night window spans two local dates, which makes the meal-window key, active-day check, and DST handling ambiguous. No phase-one meal type needs it.
+- **Validate only in the mobile client:** other clients, the future scheduler, and pre-validation rows would bypass it.
+- **Separate error codes per rule:** one stable `validation_error` code plus `field` and a message is enough for the client; specific rules stay visible in the message and tests.
+
+### Consequences
+
+Late-night dining contexts cannot be configured until a decision defines how an overnight window maps to a meal-window date. Contexts written before this validation existed cannot open sessions until they are corrected. Whether session keys must also fall within a bounded distance of "today" is undecided (see notes.md 2026-10-16).
+
+## D017 — Foreground location at use time, saved anchor as fallback
+
+- **Status:** Accepted (not yet implemented; Milestone 3)
+- **Date:** 2026-10-16
+
+### Decision
+
+When the user opens a suggestion, the app should by default use the device's current location, obtained in the foreground with when-in-use permission at that moment. Each dining context keeps a saved anchor point (its map point) that is used whenever permission is denied, location is unavailable or stale, or the user prefers the anchor. Background location, geofencing, and continuous tracking remain prohibited (PRODUCT.md §12, D010).
+
+### Alternatives rejected
+
+- **Saved anchor only:** misses the common case of eating somewhere other than the saved point, but remains the fallback.
+- **Background or significant-change location:** violates D010 and the phase-one privacy principle.
+
+### Consequences
+
+The use-time coordinate is transient request input: it must never be logged, must not be stored with more precision or longer than the recommendation record requires, and must not replace the context's anchor without an explicit user action. The API contract for passing a use-time location is not yet designed; until it is, suggestions use the anchor.
+
+## D018 — Onboarding classifications have their own endpoint
+
+- **Status:** Accepted
+- **Date:** 2026-10-16
+
+### Decision
+
+Onboarding classifications use `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state`, which records `source = onboarding` and — for Been — sets `user_place_states.was_visited_before_nosh = TRUE` permanently. The place must be an active place within the context's radius (the set onboarding presents), otherwise `422 place_not_in_context`. `PUT /v1/places/{place_id}/state` is the manual settings edit: it records `source = manual` and never sets the flag. Neither a later Nosh confirmation nor a reclassification clears it.
+
+### Alternatives rejected
+
+- **A client-supplied `source` field on the manual endpoint:** any caller could claim onboarding provenance for any place, with no link to the places onboarding showed.
+- **Infer provenance from timing (e.g. before the first session):** onboarding can be skipped and resumed, so timing is unreliable.
+
+### Consequences
+
+A restaurant marked Been during onboarding never counts toward the North Star, even when later visited through Nosh. A mistaken Been tap therefore cannot be undone by reclassifying; correcting it would need an audited administrative change. The onboarding history prior is built only from flagged places (RECOMMENDATIONS.md §5.1).

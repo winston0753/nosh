@@ -2,7 +2,7 @@
 
 - **Status:** Phase-one baseline
 - **Version:** 0.1
-- **Last updated:** 2026-10-12
+- **Last updated:** 2026-10-16
 
 ## 1. Architecture goals
 
@@ -41,7 +41,7 @@ Phase one does not require microservices, a message broker, a separate vector da
 ┌─────────────────────────────┐
 │ Supabase PostgreSQL         │
 │ PostGIS enabled             │
-│ pgvector installed, unused  │
+│ pgvector deferred (absent)  │
 │ Supabase Auth               │
 └─────────────────────────────┘
 ```
@@ -102,11 +102,9 @@ nosh/
 │       │   ├── visits/
 │       │   ├── notifications/
 │       │   └── core/
-│       └── tests/
-├── jobs/
-│   ├── ingest_places/
-│   ├── schedule_notifications/
-│   └── evaluate_policy/
+│       ├── tests/
+│       └── jobs/            # same uv project and `app` package as the API
+│           └── ingest_places/
 ├── db/
 │   └── migrations/
 ├── packages/
@@ -120,7 +118,7 @@ nosh/
 └── notes.md
 ```
 
-The first implementation may keep `jobs` inside `services/api` until a separate process is necessary. The directories describe ownership boundaries, not independently deployed microservices.
+Jobs live inside `services/api/jobs/` and import the application as the top-level `app` package, exactly like the API and its tests. Run them from `services/api` as `uv run --frozen python -m jobs.<job>.<module>`; never import through `services.api.app`. Future jobs (`schedule_notifications`, `evaluate_policy`) join the same package. The directories describe ownership boundaries, not independently deployed microservices.
 
 ## 6. Component responsibilities
 
@@ -128,6 +126,7 @@ The first implementation may keep `jobs` inside `services/api` until a separate 
 
 - Account session and onboarding UI
 - Dining-context configuration
+- Foreground location at use time, with the context's saved anchor as the fallback (see DECISIONS.md D017)
 - Current suggestion display
 - Notification registration and deep links
 - Go, Another, and Not today actions
@@ -206,6 +205,16 @@ All user-owned tables include `user_id`, `created_at`, and `updated_at` where ap
 
 Create a GiST index on `location`. Do not include precise coordinates in application logs.
 
+Validation (DECISIONS.md D016; enforced on create and update):
+
+- `local_window_start` / `local_window_end` are strict 24-hour `HH:MM` (00:00–23:59);
+- the window ends strictly after it starts on the same local day — overnight and empty windows are rejected;
+- `time_zone` must load as an IANA zone;
+- `active_days` is a non-empty list of unique integers 0–6 (0 = Monday, Python `weekday()`);
+- PATCH re-checks the window against the stored bound when only one bound changes.
+
+Failures return `422` with code `validation_error` and the offending `field`.
+
 ### `places`
 
 - `id` UUID
@@ -246,8 +255,11 @@ Create a GiST index on `location`. Do not include precise coordinates in applica
 - `place_id`
 - `state`: `unknown`, `visited`, or `not_interested`
 - `source`: onboarding, confirmation, manual edit, or import
+- `was_visited_before_nosh`: set only by an onboarding Been classification; never reset
 - `occurred_at`
 - unique constraint on `(user_id, place_id)`
+
+Writes are a single `INSERT … ON CONFLICT (user_id, place_id) DO UPDATE`, so concurrent first-time writes cannot fail, and `was_visited_before_nosh` is OR-ed with the stored value so provenance survives any writer order. Only `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state` records `source = onboarding` and can set the flag (DECISIONS.md D018); the manual settings edit and visit confirmation never do.
 
 ### `suggestion_sessions`
 
@@ -260,6 +272,8 @@ Create a GiST index on `location`. Do not include precise coordinates in applica
 - `policy_version`
 - `created_at`, `closed_at`
 - unique constraint on `(dining_context_id, meal_window_key)`
+
+`meal_window_key` is `YYYY-MM-DD#meal_type`, the local calendar date in the context's time zone. Session creation rejects (`422 validation_error`, field `meal_window_key`) a key whose date is not a real calendar date, whose meal type differs from the context's, or whose weekday is not an active day, and any context whose stored time zone or window is invalid.
 
 ### `proposals`
 
@@ -290,7 +304,8 @@ Response writes lock the owning suggestion-session row before reading the stored
 - a different action on an already-answered proposal, including the loser of a concurrent race → `409 conflict`, never `422 invalid_state_transition`;
 - a reused `client_event_id` for another proposal or action → `409 conflict`; for another user → `403 forbidden`;
 - `422 invalid_state_transition` is reserved for unanswered proposals in a closed session;
-- integrity errors from any other constraint propagate unchanged.
+- integrity errors from any other constraint propagate unchanged;
+- every replay (same event, or same action under a new event) returns a result equivalent to the original: Go → `accepted`, Not today → `skipped`, Another → the proposal it generated with `active`, or `exhausted` with `no_candidates: true` when it generated none — even if the session has since moved on.
 
 ### `visits`
 
@@ -302,6 +317,8 @@ Response writes lock the owning suggestion-session row before reading the stored
 - `confirmation_source`
 - `rating`: positive or negative
 - `created_at`, `corrected_at`
+
+`GET /v1/visits` pages in `(visited_at DESC, id DESC)` order. The cursor is the last visit ID of the previous page and must belong to the caller; the unique ID tie-breaker means visits sharing a timestamp are never skipped or repeated. A visit for an unknown `place_id` returns `404 not_found`.
 
 ### `device_tokens`
 
@@ -331,7 +348,7 @@ Response writes lock the owning suggestion-session row before reading the stored
 - Identifiers: server-generated UUIDs
 - Time values: RFC 3339 UTC timestamps; local schedules also include an IANA time zone
 - Pagination: cursor-based when needed
-- Errors: stable machine-readable code, human-readable message, and optional field details
+- Errors: stable machine-readable code, human-readable message, and optional field details — `{"code", "message", "field"?}`. Schema validation failures use code `validation_error` with the first offending `field` and keep FastAPI's per-field list under `detail`. Unknown resources (including place IDs) return `404 not_found`.
 - Writes from the mobile app require an `Idempotency-Key` or unique `client_event_id`
 - Authentication: Supabase bearer token
 - Authorization: server-side ownership checks on every user resource
@@ -349,7 +366,8 @@ PATCH  /v1/contexts/{context_id}
 DELETE /v1/contexts/{context_id}
 
 GET    /v1/contexts/{context_id}/onboarding-places
-PUT    /v1/places/{place_id}/state
+PUT    /v1/contexts/{context_id}/onboarding-places/{place_id}/state   # onboarding classification
+PUT    /v1/places/{place_id}/state                                    # manual settings edit
 
 POST   /v1/suggestion-sessions
 GET    /v1/suggestion-sessions/{session_id}
@@ -388,10 +406,16 @@ State transitions are validated by the server. Duplicate requests return the alr
 ## 10. Authentication and authorization
 
 - Supabase Auth provides passwordless email authentication.
-- The mobile app obtains a user access token (Supabase JWT).
-- FastAPI validates: signature (HS256 with SUPABASE_JWT_SECRET or RS256/ES256 via JWKS),
-  expiry, issuer ({SUPABASE_URL}/auth/v1), audience (authenticated), role (authenticated),
-  and UUID subject.  SUPABASE_URL is required in production mode.
+- The mobile app is configured with only the Supabase project URL and the project's
+  **publishable** key (the client-safe key that replaces the legacy `anon` key); it never
+  holds a secret or service-role key. It obtains a user access token (Supabase JWT).
+- FastAPI validates: signature, expiry, issuer ({SUPABASE_URL}/auth/v1), audience
+  (authenticated), role (authenticated), and UUID subject. SUPABASE_URL is required in
+  production mode.
+- Signature verification uses the project's JWKS
+  ({SUPABASE_URL}/auth/v1/.well-known/jwks.json, RS256/ES256 asymmetric signing keys), so
+  the API needs no shared JWT secret. `SUPABASE_JWT_SECRET` (HS256) exists only for projects
+  still on the legacy shared secret; leave it empty for new projects.
 - Local/test environments use a UUID-bypass adapter (AUTH_LOCAL_DEV=true) restricted to
   loopback database hosts; guarded by APP_ENVIRONMENT.
 - The Supabase Data API is blocked at the database level (migration 0002 revokes all
@@ -447,7 +471,7 @@ State transitions are validated by the server. Duplicate requests return the alr
 
 ### Local
 
-- Docker Compose PostgreSQL with PostGIS and pgvector
+- Docker Compose PostgreSQL with PostGIS (pgvector deferred and absent; D013)
 - FastAPI development server
 - Expo development build
 - deterministic fixture data
@@ -494,6 +518,6 @@ Add complexity only when evidence requires it:
 1. Curated fixtures → repeatable place ingestion
 2. Simple worker polling → managed scheduled jobs or queue
 3. Factual reason codes → grounded explanation service
-4. Structured craving filters → hybrid search with pgvector
+4. Structured craving filters → hybrid search (adds pgvector, deferred per D013)
 5. Single-person context → group preference model
 6. Private cohort → public App Store readiness

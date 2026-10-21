@@ -3,12 +3,13 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NoshError, NotFoundError
 from app.places.models import Place, UserPlaceState
+from app.places.service import require_place, upsert_user_place_state
 from app.visits.models import Visit
 from app.visits.schemas import ProgressResponse, VisitCreate, VisitResponse, VisitUpdate
 
@@ -35,6 +36,8 @@ async def confirm_visit(db: AsyncSession, user_id: uuid.UUID, body: VisitCreate)
     - Allowed per DECISIONS.md D015.
     - Do not count toward North Star unless the place was not visited before Nosh.
     """
+    await require_place(db, body.place_id)
+
     if body.proposal_id is not None:
         from app.suggestions.models import Proposal, ProposalResponse, SuggestionSession
 
@@ -118,7 +121,7 @@ async def confirm_visit(db: AsyncSession, user_id: uuid.UUID, body: VisitCreate)
                 return await _to_response(db, row)
         raise
 
-    await _upsert_place_state(db, user_id, body.place_id, "visited", "confirmation")
+    await upsert_user_place_state(db, user_id, body.place_id, "visited", "confirmation")
     await db.commit()
     await db.refresh(visit)
     return await _to_response(db, visit)
@@ -148,8 +151,18 @@ async def update_visit(
 async def list_visits(
     db: AsyncSession, user_id: uuid.UUID, limit: int = 50, cursor: uuid.UUID | None = None
 ) -> list[VisitResponse]:
+    """Reverse-chronological visit history with keyset pagination.
+
+    Ordering is (visited_at DESC, id DESC).  The visit ID is a unique
+    tie-breaker, so visits sharing a timestamp are neither skipped nor repeated
+    across pages.  The cursor is the last visit ID of the previous page and must
+    belong to the requesting user.
+    """
     query = (
-        select(Visit).where(Visit.user_id == user_id).order_by(Visit.visited_at.desc()).limit(limit)
+        select(Visit)
+        .where(Visit.user_id == user_id)
+        .order_by(Visit.visited_at.desc(), Visit.id.desc())
+        .limit(limit)
     )
     if cursor is not None:
         cursor_result = await db.execute(
@@ -158,7 +171,9 @@ async def list_visits(
         cursor_visit = cursor_result.scalar_one_or_none()
         if cursor_visit is None:
             raise NotFoundError("cursor visit", str(cursor))
-        query = query.where(Visit.visited_at < cursor_visit.visited_at)
+        query = query.where(
+            tuple_(Visit.visited_at, Visit.id) < tuple_(cursor_visit.visited_at, cursor_visit.id)
+        )
 
     result = await db.execute(query)
     return [await _to_response(db, v) for v in result.scalars().all()]
@@ -235,38 +250,6 @@ def compute_progress_months(
         )
         for month, data in sorted(months.items())
     ]
-
-
-async def _upsert_place_state(
-    db: AsyncSession, user_id: uuid.UUID, place_id: uuid.UUID, state: str, source: str
-) -> None:
-    result = await db.execute(
-        select(UserPlaceState).where(
-            UserPlaceState.user_id == user_id,
-            UserPlaceState.place_id == place_id,
-        )
-    )
-    row = result.scalar_one_or_none()
-    now = datetime.now(UTC)
-    if row is None:
-        was_before = source == "onboarding" and state == "visited"
-        db.add(
-            UserPlaceState(
-                user_id=user_id,
-                place_id=place_id,
-                state=state,
-                source=source,
-                was_visited_before_nosh=was_before,
-                occurred_at=now,
-            )
-        )
-    else:
-        row.state = state
-        row.source = source
-        row.occurred_at = now
-        # Never reset was_visited_before_nosh once TRUE.
-        if source == "onboarding" and state == "visited":
-            row.was_visited_before_nosh = True
 
 
 async def _to_response(db: AsyncSession, visit: Visit) -> VisitResponse:

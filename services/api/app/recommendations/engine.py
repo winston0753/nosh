@@ -40,9 +40,16 @@ def _pool_value(unvisited: int, scale: float = 2.0) -> float:
 
 
 def _beta_params(stats: CuisineStats) -> tuple[float, float]:
-    """Compute Beta(alpha, beta) incorporating onboarding history prior."""
-    alpha = 1.0 + HISTORY_PRIOR_STRENGTH * stats.history_frequency
-    beta = 1.0 + HISTORY_PRIOR_STRENGTH * (1.0 - stats.history_frequency)
+    """Compute Beta(alpha, beta) from the onboarding prior plus confirmed outcomes.
+
+    Without any pre-Nosh onboarding history the prior is the neutral Beta(1, 1)
+    (RECOMMENDATIONS.md §5.1); otherwise it is Beta(1 + 4f, 1 + 4(1 - f)).
+    """
+    if stats.history_frequency is None:
+        alpha, beta = 1.0, 1.0
+    else:
+        alpha = 1.0 + HISTORY_PRIOR_STRENGTH * stats.history_frequency
+        beta = 1.0 + HISTORY_PRIOR_STRENGTH * (1.0 - stats.history_frequency)
     alpha += stats.confirmed_positive_visits
     beta += 0.25 * stats.confirmed_negative_visits
     return alpha, beta

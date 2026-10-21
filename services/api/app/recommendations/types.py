@@ -20,7 +20,10 @@ class CuisineStats:
     slug: str
     confirmed_positive_visits: int = 0
     confirmed_negative_visits: int = 0
-    history_frequency: float = 0.0  # normalized onboarding frequency [0, 1]
+    # Normalized pre-Nosh onboarding frequency in [0, 1].  None means the user
+    # has no pre-Nosh onboarding history at all, which selects the neutral
+    # Beta(1, 1) prior.  0.0 means history exists but not for this cuisine.
+    history_frequency: float | None = None
     unvisited_count: int = 0
 
 

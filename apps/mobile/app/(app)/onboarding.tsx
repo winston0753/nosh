@@ -13,10 +13,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import type { OnboardingPlace } from '../../src/api/types';
+import type { OnboardingPlace, PlaceStateValue as PlaceState } from '../../src/api/types';
 import { useAuth } from '../../src/hooks/useAuth';
-
-type PlaceState = 'visited' | 'not_interested' | 'unknown';
 
 const STATE_BUTTONS: { label: string; value: PlaceState; color: string }[] = [
   { label: 'Been', value: 'visited', color: '#4CAF50' },
@@ -77,8 +75,10 @@ export default function OnboardingScreen() {
   });
 
   const stateMutation = useMutation({
+    // The onboarding endpoint (not the manual settings edit) records
+    // onboarding provenance, so Been places never count as new discoveries.
     mutationFn: ({ placeId, state }: { placeId: string; state: PlaceState }) =>
-      client!.setPlaceState(placeId, state),
+      client!.classifyOnboardingPlace(contextId!, placeId, state),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['onboarding-places', contextId] });
     },

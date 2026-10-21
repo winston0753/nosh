@@ -5,13 +5,14 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.api.v1 import v1_router
 from app.config import get_settings
 from app.core.database import get_engine
-from app.core.errors import NoshError, nosh_error_handler
+from app.core.errors import NoshError, nosh_error_handler, validation_error_handler
 
 
 @asynccontextmanager
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
         )
 
     app.add_exception_handler(NoshError, nosh_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, validation_error_handler)  # type: ignore[arg-type]
 
     @app.get("/health/live", tags=["health"])
     async def liveness() -> dict[str, Any]:

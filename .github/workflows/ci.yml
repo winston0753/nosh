@@ -77,13 +77,13 @@ jobs:
         run: uv sync --frozen --group dev
 
       - name: Lint (ruff)
-        run: uv run --frozen ruff check app/ tests/
+        run: uv run --frozen ruff check app/ jobs/ tests/
 
       - name: Format check (ruff)
-        run: uv run --frozen ruff format --check app/ tests/
+        run: uv run --frozen ruff format --check app/ jobs/ tests/
 
       - name: Type check (mypy strict)
-        run: uv run --frozen mypy app/ --strict
+        run: uv run --frozen mypy app/ jobs/ --strict
 
       - name: Unit tests (no DB)
         run: uv run --frozen pytest tests/ -q -m "not integration"

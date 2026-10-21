@@ -2,58 +2,97 @@
  * Visit confirmation screen — shown after a Go action.
  * Deep-linked from notifications or the app after the meal window.
  *
- * Requires: sessionId (from path) + proposalId + placeName (from query params)
- * set when the user taps Go. This avoids fetching the session to find the
- * accepted proposal (session.current_proposal is null once accepted).
+ * Requires: sessionId (from path) + proposalId + placeId + placeName (from
+ * query params) set when the user taps Go. This avoids fetching the session to
+ * find the accepted proposal (session.current_proposal is null once accepted).
+ *
+ * Save states: choosing → saving → saved ("Thanks") or failed (retry).  "Thanks"
+ * appears only after the server confirms the visit; a retry re-sends the same
+ * frozen request, so it can never create a duplicate visit.
  */
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
   SafeAreaView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import type { NoshClient } from '../../src/api/client';
 import { useAuth } from '../../src/hooks/useAuth';
+import { useVisitConfirmation } from '../../src/hooks/useVisitConfirmation';
 
 export default function ConfirmationScreen() {
-  const { proposalId, placeId, placeName } =
-    useLocalSearchParams<{
-      sessionId: string;
-      proposalId: string;
-      placeId: string;
-      placeName: string;
-    }>();
+  const { proposalId, placeId, placeName } = useLocalSearchParams<{
+    sessionId: string;
+    proposalId: string;
+    placeId: string;
+    placeName: string;
+  }>();
   const { client } = useAuth();
-  const qc = useQueryClient();
-  const [confirming, setConfirming] = useState<'yes' | 'no' | null>(null);
-  const [rating, setRating] = useState<'positive' | 'negative' | null>(null);
-
   const displayName = placeName ?? 'this restaurant';
 
-  const visitMutation = useMutation({
-    mutationFn: (r: 'positive' | 'negative') => {
-      if (!placeId) {
-        throw new Error('Missing place ID for visit confirmation');
-      }
-      return client!.createVisit({
-        place_id: placeId,
-        proposal_id: proposalId ?? undefined,
-        visited_at: new Date().toISOString(),
-        rating: r,
-        confirmation_source: 'app_confirmation',
-      });
-    },
-    onSuccess: () => {
+  // Without a proposal there is no idempotency identity for the visit, so a
+  // retry could duplicate it.  Refuse rather than write unsafely.
+  if (!proposalId || !placeId) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.inner}>
+          <Text style={styles.title}>Can&apos;t confirm this visit</Text>
+          <Text style={styles.body}>This confirmation link is incomplete.</Text>
+          <TouchableOpacity style={styles.btn} onPress={() => router.replace('/(app)')}>
+            <Text style={styles.btnText}>Back to suggestions</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!client) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.inner}>
+          <ActivityIndicator />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <ConfirmationFlow
+      client={client}
+      proposalId={proposalId}
+      placeId={placeId}
+      displayName={displayName}
+    />
+  );
+}
+
+function ConfirmationFlow({
+  client,
+  proposalId,
+  placeId,
+  displayName,
+}: {
+  client: NoshClient;
+  proposalId: string;
+  placeId: string;
+  displayName: string;
+}) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState<'yes' | 'no' | null>(null);
+  const { phase, rating, submit, retry } = useVisitConfirmation({
+    client,
+    placeId,
+    proposalId,
+    onSaved: () => {
       qc.invalidateQueries({ queryKey: ['visits'] });
       qc.invalidateQueries({ queryKey: ['progress'] });
-      router.replace('/(app)');
     },
-    onError: () => Alert.alert('Could not save visit', 'Try again.'),
   });
 
   if (confirming === null) {
@@ -61,10 +100,15 @@ export default function ConfirmationScreen() {
       <SafeAreaView style={styles.container}>
         <View style={styles.inner}>
           <Text style={styles.title}>Did you visit {displayName}?</Text>
-          <TouchableOpacity style={styles.btn} onPress={() => setConfirming('yes')}>
+          <TouchableOpacity
+            testID="confirm-yes"
+            style={styles.btn}
+            onPress={() => setConfirming('yes')}
+          >
             <Text style={styles.btnText}>Yes, I went</Text>
           </TouchableOpacity>
           <TouchableOpacity
+            testID="confirm-no"
             style={[styles.btn, styles.secondary]}
             onPress={() => setConfirming('no')}
           >
@@ -93,30 +137,51 @@ export default function ConfirmationScreen() {
   }
 
   // confirming === 'yes'
-  if (rating === null) {
+  if (phase === 'saved') {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.inner}>
-          <Text style={styles.title}>How was {displayName}?</Text>
+          <Text style={styles.title}>Thanks!</Text>
+          <Text style={styles.body}>
+            {rating === 'positive' ? 'Great pick 🎉' : "We'll learn from this."}
+          </Text>
           <TouchableOpacity
-            style={[styles.btn, styles.positive]}
-            onPress={() => {
-              setRating('positive');
-              visitMutation.mutate('positive');
-            }}
-            disabled={visitMutation.isPending}
+            testID="confirm-done"
+            style={styles.btn}
+            onPress={() => router.replace('/(app)')}
           >
-            <Text style={styles.btnText}>👍 Good</Text>
+            <Text style={styles.btnText}>Done</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.btn, styles.negative]}
-            onPress={() => {
-              setRating('negative');
-              visitMutation.mutate('negative');
-            }}
-            disabled={visitMutation.isPending}
-          >
-            <Text style={styles.btnText}>👎 Not great</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (phase === 'saving') {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.inner}>
+          <ActivityIndicator />
+          <Text style={styles.body}>Saving your visit…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (phase === 'failed') {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.inner}>
+          <Text style={styles.title}>Couldn&apos;t save your visit</Text>
+          <Text style={styles.body}>
+            Check your connection and try again. Your{' '}
+            {rating === 'positive' ? '👍 Good' : '👎 Not great'} rating is kept.
+          </Text>
+          <TouchableOpacity testID="confirm-retry" style={styles.btn} onPress={retry}>
+            <Text style={styles.btnText}>Try again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Text style={styles.laterText}>Remind me later</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -126,10 +191,21 @@ export default function ConfirmationScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.inner}>
-        <Text style={styles.title}>Thanks!</Text>
-        <Text style={styles.body}>
-          {rating === 'positive' ? 'Great pick 🎉' : "We'll learn from this."}
-        </Text>
+        <Text style={styles.title}>How was {displayName}?</Text>
+        <TouchableOpacity
+          testID="rate-positive"
+          style={[styles.btn, styles.positive]}
+          onPress={() => submit('positive')}
+        >
+          <Text style={styles.btnText}>👍 Good</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID="rate-negative"
+          style={[styles.btn, styles.negative]}
+          onPress={() => submit('negative')}
+        >
+          <Text style={styles.btnText}>👎 Not great</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );

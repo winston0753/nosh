@@ -19,7 +19,7 @@ The material under `docs/` is historical research. Do not let it override the ca
 
 - Keep the backend a FastAPI modular monolith.
 - Use Expo React Native with TypeScript for the mobile client.
-- Use PostgreSQL with PostGIS; keep pgvector unused in phase one.
+- Use PostgreSQL with PostGIS; pgvector is deferred and absent in phase one (D013).
 - Keep recommendation generation deterministic and independent of LLM calls.
 - Count only confirmed, positively rated, previously unvisited restaurants toward the North Star.
 - Treat Go as intent, not a visit.
@@ -29,21 +29,21 @@ The material under `docs/` is historical research. Do not let it override the ca
 - Do not add delivery, ordering, background location, calendar access, social features, RAG, agents, or public-launch scope.
 - Update the canonical documents in the same change whenever implementation changes a documented contract or decision.
 
-## Status (as of 2026-10-13)
+## Status (as of 2026-10-16)
 
 | Milestone | Status |
 |---|---|
-| 1 — Repository and backend foundation | **Complete** (local; uncommitted until the user commits) |
+| 1 — Repository and backend foundation | **Complete** (merged to `main` via PR #1) |
 | 2 — Deterministic suggestion API | **Complete** |
 | 3 — Expo vertical slice | **Partially complete** — local vertical slice implemented; tester-readiness work remains |
 | 4 — Notifications and private cohort readiness | Not started; not next (only the `device_tokens` and `notification_deliveries` tables exist) |
 
-The current checkpoint is **Milestone 0.1 — Working Local Foundation**: the local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. It is suitable for a source-control checkpoint but not for TestFlight or external testers.
+The current checkpoint is **Milestone 0.1 — Working Local Foundation**, merged to `main` through PR #1: the local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. A correctness-hardening pass (onboarding provenance, honest visit confirmation, neutral priors, strict context validation, importer layout, atomic place-state writes) followed on branch `milestone-0.1-correctness-hardening`; see `notes.md` 2026-10-16. It is suitable for source control but not for TestFlight or external testers.
 
 **Next: complete Milestone 3.** Remaining work:
 
 1. Replace the local UUID auth adapter with Supabase passwordless email authentication in the mobile app.
-2. Let users select location, radius, and notification days; context creation currently hardcodes the SF Mission coordinate, 1,600 m, and every day.
+2. Let users select location, radius, and notification days; context creation currently hardcodes the SF Mission coordinate, 1,600 m, and every day. Location defaults to foreground current location at use time with the saved anchor as fallback (D017); background location stays out of scope.
 3. Persist the current suggestion for offline use.
 4. Queue idempotent response writes during transient network failures.
 5. Configure an EAS development/TestFlight build.
