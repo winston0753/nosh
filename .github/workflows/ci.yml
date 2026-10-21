@@ -77,13 +77,13 @@ jobs:
         run: uv sync --frozen --group dev
 
       - name: Lint (ruff)
-        run: uv run --frozen ruff check app/ tests/
+        run: uv run --frozen ruff check app/ jobs/ tests/
 
       - name: Format check (ruff)
-        run: uv run --frozen ruff format --check app/ tests/
+        run: uv run --frozen ruff format --check app/ jobs/ tests/
 
       - name: Type check (mypy strict)
-        run: uv run --frozen mypy app/ --strict
+        run: uv run --frozen mypy app/ jobs/ --strict
 
       - name: Unit tests (no DB)
         run: uv run --frozen pytest tests/ -q -m "not integration"
@@ -100,6 +100,11 @@ jobs:
 
       - name: Re-apply migrations (round-trip verification)
         run: uv run --frozen alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg2://nosh:nosh_dev@localhost:5432/nosh_test
+
+      - name: Check models match migrations
+        run: uv run --frozen alembic check
         env:
           DATABASE_URL: postgresql+psycopg2://nosh:nosh_dev@localhost:5432/nosh_test
 
@@ -121,7 +126,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
 

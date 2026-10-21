@@ -2,7 +2,11 @@
 
 - **Status:** Phase-one baseline
 - **Version:** `policy_v0`
-- **Last updated:** 2026-10-12
+- **Last updated:** 2026-10-20
+
+> **Successor accepted:** `policy_v1` (DECISIONS.md D024) is accepted but not implemented. It adds hard filters for opening hours and the per-meal price ceiling, a Bayesian review-count-adjusted quality floor, a hidden-gem boost, price fit, and a national-chain penalty, removes the `highly_rated` reason code, and sorts candidates by provider ID before sampling. Under D022 its decision record stores only place identifiers, ranks, and Nosh-owned components. This document describes `policy_v0` as implemented until `policy_v1` lands.
+>
+> **Known `policy_v0` defects** (found 2026-10-19, confirmed 2026-10-20, to be fixed by `policy_v1`): `highly_rated` is emitted from the fixtures' fictional `quality_score`; cuisine samples are drawn in candidate encounter order, and the radius query sorts only by distance, so equal distances or reordered inputs can change the winner; `exclusion_counts` is always empty; `context_fit` does not depend on the meal type.
 
 ## 1. Objective
 
@@ -77,7 +81,9 @@ beta_c  = 1 + history_prior_strength × (1 - normalized_history_frequency(c))
 history_prior_strength = 4
 ```
 
-If no onboarding history exists, use `Beta(1, 1)`.
+If no onboarding history exists, use `Beta(1, 1)` for every cuisine. When history exists, a cuisine absent from it has `normalized_history_frequency = 0`, giving `Beta(1, 5)`.
+
+**Provenance.** Onboarding history is only the primary cuisines of places the user marked Been during onboarding (`was_visited_before_nosh = TRUE`). A place that became visited through a Nosh confirmation, a manual settings edit, or an import is not history. Confirmed outcomes (§7) come only from proposal-backed visits; manual visits do not update cuisine preference (D015). A post-Nosh visit is therefore never counted both as history and as an outcome.
 
 The simulator supports this mechanism as preferable to lowest been-to percentage under its assumptions. The prior strength is still a hypothesis and must be versioned.
 
@@ -149,13 +155,13 @@ These values are hypotheses. Any change creates a new policy version.
 
 ### New user with onboarding history
 
-- Use visited cuisine frequency as a weak taste prior.
+- Use the cuisine frequency of places marked Been during onboarding as a weak taste prior.
 - Exclude places marked Been or Not interested.
 - Preserve exploration across cuisines with unvisited supply.
 
 ### New user without onboarding history
 
-- Use uniform cuisine priors.
+- Use uniform `Beta(1, 1)` cuisine priors.
 - Prefer cuisines with multiple eligible places rather than tiny categories.
 - Use neutral place-quality defaults where data is missing.
 - Ask for confirmation quickly so real outcomes replace priors.

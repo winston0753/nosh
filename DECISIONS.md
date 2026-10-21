@@ -1,7 +1,7 @@
 # Nosh Decision Log
 
 - **Status:** Active
-- **Last updated:** 2026-10-12
+- **Last updated:** 2026-10-20
 
 This file records product and architecture decisions that affect multiple parts of the system. Each entry includes the selected option, rejected alternatives, consequences, and conditions for reconsideration.
 
@@ -89,7 +89,7 @@ Module boundaries must remain explicit, but deployment stays simple. A component
 
 ### Decision
 
-Use Supabase for hosted PostgreSQL and passwordless authentication. Enable PostGIS for radius queries and pgvector for future use, while leaving vector retrieval out of phase one.
+Use Supabase for hosted PostgreSQL and passwordless authentication. Enable PostGIS for radius queries. pgvector is deferred and absent in phase one (superseded by D013); vector retrieval is out of scope.
 
 ### Alternatives rejected
 
@@ -99,7 +99,7 @@ Use Supabase for hosted PostgreSQL and passwordless authentication. Enable PostG
 
 ### Consequences
 
-The mobile app authenticates with Supabase, but the FastAPI service owns product writes and recommendation workflows.
+The mobile app authenticates with Supabase using only the project URL and the client-safe publishable key, but the FastAPI service owns product writes and recommendation workflows. FastAPI verifies access tokens against the project's JWKS (asymmetric signing keys) and needs no shared JWT secret; the HS256 `SUPABASE_JWT_SECRET` path remains only for projects still on the legacy secret.
 
 ## D006 — Keep the recommendation core deterministic
 
@@ -121,7 +121,7 @@ Future LLM components are limited to language-shaped tasks and receive their own
 
 ## D007 — Use directions-only handoff in phase one
 
-- **Status:** Accepted
+- **Status:** Superseded by D021 (2026-10-20) — the Maps-only principle stands, but the handoff target is Google Maps
 - **Date:** 2026-10-12
 
 ### Decision
@@ -139,7 +139,7 @@ The product validates restaurant discovery and visit behavior without depending 
 
 ## D008 — Start with curated place data
 
-- **Status:** Accepted
+- **Status:** Superseded by D021 and D027 (2026-10-20)
 - **Date:** 2026-10-12
 
 ### Decision
@@ -280,3 +280,233 @@ The `POST /v1/visits` endpoint accepts `proposal_id=null` for visits the user lo
 ### Consequences
 
 Manual visits count toward visit history and can affect the North Star metric, but they do not influence cuisine preference state (no Beta update) because there is no proposal to link them to a cuisine selection event.  The progress metric already correctly handles this by checking only the confirmed-positive count.
+
+## D016 — Strict dining-context schedules; no overnight windows
+
+- **Status:** Accepted
+- **Date:** 2026-10-16
+
+### Decision
+
+Validate every dining-context schedule on create and update: strict 24-hour `HH:MM` bounds, an IANA time zone that loads, a non-empty list of unique active days 0–6 (0 = Monday), and a window whose end is strictly after its start on the same local day. Overnight windows remain unsupported. Suggestion-session keys (`YYYY-MM-DD#meal_type`) must name a real date on an active day with the context's meal type, and the context's stored schedule must itself be valid. Failures return `422 validation_error` with the offending `field`.
+
+### Alternatives rejected
+
+- **Accept overnight windows:** a late-night window spans two local dates, which makes the meal-window key, active-day check, and DST handling ambiguous. No phase-one meal type needs it.
+- **Validate only in the mobile client:** other clients, the future scheduler, and pre-validation rows would bypass it.
+- **Separate error codes per rule:** one stable `validation_error` code plus `field` and a message is enough for the client; specific rules stay visible in the message and tests.
+
+### Consequences
+
+Late-night dining contexts cannot be configured until a decision defines how an overnight window maps to a meal-window date. Contexts written before this validation existed cannot open sessions until they are corrected. Whether session keys must also fall within a bounded distance of "today" is undecided (see notes.md 2026-10-16).
+
+## D017 — Foreground location at use time, saved anchor as fallback
+
+- **Status:** Accepted; amended by D020 (2026-10-20) — the fallback anchors are optional Home/Work spots, not dining-context points
+- **Date:** 2026-10-16
+
+### Decision
+
+When the user opens a suggestion, the app should by default use the device's current location, obtained in the foreground with when-in-use permission at that moment. Each dining context keeps a saved anchor point (its map point) that is used whenever permission is denied, location is unavailable or stale, or the user prefers the anchor. Background location, geofencing, and continuous tracking remain prohibited (PRODUCT.md §12, D010).
+
+### Alternatives rejected
+
+- **Saved anchor only:** misses the common case of eating somewhere other than the saved point, but remains the fallback.
+- **Background or significant-change location:** violates D010 and the phase-one privacy principle.
+
+### Consequences
+
+The use-time coordinate is transient request input: it must never be logged, must not be stored with more precision or longer than the recommendation record requires, and must not replace the context's anchor without an explicit user action. The API contract for passing a use-time location is not yet designed; until it is, suggestions use the anchor.
+
+## D018 — Onboarding classifications have their own endpoint
+
+- **Status:** Accepted; amended by D025 (2026-10-20) — the provenance rule stands, recorded from the suggestion card
+- **Date:** 2026-10-16
+
+### Decision
+
+Onboarding classifications use `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state`, which records `source = onboarding` and — for Been — sets `user_place_states.was_visited_before_nosh = TRUE` permanently. The place must be an active place within the context's radius (the set onboarding presents), otherwise `422 place_not_in_context`. `PUT /v1/places/{place_id}/state` is the manual settings edit: it records `source = manual` and never sets the flag. Neither a later Nosh confirmation nor a reclassification clears it.
+
+### Alternatives rejected
+
+- **A client-supplied `source` field on the manual endpoint:** any caller could claim onboarding provenance for any place, with no link to the places onboarding showed.
+- **Infer provenance from timing (e.g. before the first session):** onboarding can be skipped and resumed, so timing is unreliable.
+
+### Consequences
+
+A restaurant marked Been during onboarding never counts toward the North Star, even when later visited through Nosh. A mistaken Been tap therefore cannot be undone by reclassifying; correcting it would need an audited administrative change. The onboarding history prior is built only from flagged places (RECOMMENDATIONS.md §5.1).
+
+## D019 — Upgrade Expo SDK 53 to SDK 57
+
+- **Status:** Accepted (not yet implemented)
+- **Date:** 2026-10-20
+
+### Decision
+
+Upgrade the mobile app from Expo SDK 53 (React Native 0.79, Expo Router 5) to SDK 57 (React Native 0.86), one SDK at a time, before adding the Supabase, location, and map dependencies Milestone 3 needs.
+
+### Alternatives rejected
+
+- **Stay on SDK 53 with an Xcode 26 EAS image:** since 2026-04-28 App Store Connect accepts only builds made with Xcode 26 and the iOS 26 SDK; Expo warns SDK 53 and older may not build with it and recommends SDK 54 or later.
+- **Upgrade only to SDK 54:** the minimum compliant version, but already three releases behind and certain to need another upgrade during phase one.
+
+### Consequences
+
+New dependencies are installed once against the final SDK. Expo Router, React Native, and related packages move to the versions SDK 57 pins; CI moves to Node 22 LTS. The npm audit baseline in README must be re-measured.
+
+## D020 — Current location first; a meal schedule replaces dining contexts
+
+- **Status:** Accepted (not yet implemented)
+- **Date:** 2026-10-20
+
+### Decision
+
+A suggestion is anchored at the device's foreground location when the user opens the app at meal time, wherever they are. Dining contexts are replaced by one per-user meal schedule set from an onboarding survey: weekday lunch is the default, and dinner is opt-in. Users may save optional Home and Work anchors, used only when location permission is denied or a fix is unavailable. Suggestion sessions are keyed by `(user_id, meal_window_key)`. The D016 schedule rules (strict `HH:MM`, IANA zone, unique days 0–6, no overnight windows) apply to the meal schedule.
+
+### Alternatives rejected
+
+- **Saved dining contexts as the primary unit (original F2):** users are not always at the office or home at lunch; fixed anchors miss the common case.
+- **Background or significant-change location:** violates D010.
+
+### Consequences
+
+A pre-curated neighborhood catalog cannot serve "anywhere," so candidates come from a live provider (D021). Overlapping contexts disappear. The `dining_contexts` table, its endpoints, and the context screens are replaced in a migration with a tested downgrade.
+
+## D021 — Google Places end to end for phase one
+
+- **Status:** Accepted (not yet implemented)
+- **Date:** 2026-10-20
+- **Evidence:** `docs/research/2026-10-20-place-data-and-map-terms.md`
+
+### Decision
+
+Each suggestion session makes one Google Places API (New) Nearby Search request with an explicit Enterprise field mask (rating, review count, opening hours, price level, primary type) around the session's anchor. Those fields drive filtering and ranking. The card shows Google place details on a Google map with Google attribution, and Go opens the place in Google Maps. Apple Maps is not used in the meal-time path.
+
+### Alternatives rejected
+
+- **Rank with Google, display and hand off with Apple:** prohibited — Google Service Specific Terms §14.2 forbids using Places content "in conjunction with a non-Google map"; ToS §3.2.3(e) forbids displaying or using Places content on one.
+- **Apple MapKit / Apple Maps Server API only:** free and Apple-native, but no rating, review count, hours, or price, so the quality floor and open-now filter are impossible.
+- **Foursquare for ranking, Apple for display:** about $6/month, but Foursquare Master Terms §7.5.7 forbids co-mingling its ranking signals with Nosh's own.
+- **Yelp:** $229/month minimum.
+- **Overture curated catalog:** no ratings or hours, and cannot cover arbitrary locations.
+
+### Consequences
+
+D007's Apple Maps handoff is superseded; the phase-one rule "Maps-only handoff, no ordering" remains. The mobile app needs a Google Maps SDK key restricted to the bundle ID; the API needs a server key. Whether re-ranking counts as "modifying search results" (ToS §3.2.3(g)) is ambiguous and must be clarified with Google before any public launch. Tests and CI use a fixture provider and need no Google key.
+
+## D022 — Persist only provider IDs and Nosh-owned data
+
+- **Status:** Accepted (not yet implemented)
+- **Date:** 2026-10-20
+
+### Decision
+
+The database stores the Google `place_id` (storable indefinitely) and Nosh-owned data only: user place states, responses, visits, ratings, chain-list matches computed from Nosh's own list, proposal ranks, and score components computed from Nosh-owned inputs. Names, addresses, ratings, review counts, hours, types, and anything derived from them are fetched live and not persisted. A session stores its ranked list of `place_id`s at creation; Another advances through that list without re-querying the provider. On the device, only session and proposal identifiers and queued writes are cached; card content requires the network.
+
+### Alternatives rejected
+
+- **Store a full candidate snapshot (current `candidate_snapshot`):** caches Google content contrary to ToS §3.2.3(a)–(b).
+- **Store Google-derived scores or cuisine buckets:** no derived-data exception exists; a stored score approximates the rating.
+
+### Consequences
+
+PRODUCT principle 6 narrows to "reconstructable from stored IDs, ranks, Nosh-owned components, and policy version." Recommendation replay cannot reproduce provider inputs that have since changed. The offline edge case "cache the current card" narrows to IDs and queued writes. History screens resolve names live. Cuisine learning needs a per-visit cuisine label that is Nosh- or user-owned; how it is captured is an open question to settle before `policy_v1` is implemented.
+
+## D023 — Notifications are location-free nudges
+
+- **Status:** Accepted (Milestone 4; not yet implemented)
+- **Date:** 2026-10-20
+
+### Decision
+
+A meal-time notification carries no restaurant. Tapping it opens the app, which obtains a foreground location and creates the suggestion session then. In-notification Go / Another / Not today actions are not offered in phase one.
+
+### Alternatives rejected
+
+- **Generate the suggestion before notifying (original F7):** requires knowing where the user is without background location, which D010 forbids.
+- **Location-push or Live Activity techniques:** need Always permission or rely on undocumented behavior.
+
+### Consequences
+
+The scheduler only sends deduplicated, schedule-aware reminders and confirmation prompts; it does not pre-generate suggestions. A WidgetKit widget (which may receive location under "While Using the App or Widgets") is a possible later addition, not phase one.
+
+## D024 — `policy_v1` ranking
+
+- **Status:** Accepted (not yet implemented)
+- **Date:** 2026-10-20
+
+### Decision
+
+Replace `policy_v0` with `policy_v1`, a pure, versioned policy:
+
+- **Hard filters:** open through the meal window; not visited and not Not interested; not already proposed in the session; within walking range; at or under the user's price ceiling (D026).
+- **Quality floor:** a review-count-adjusted (Bayesian) rating; places below the floor are excluded unless nothing clears it.
+- **Weighted components:** walking time; quality above the floor; a hidden-gem boost for places above the floor with few reviews; price fit; learned cuisine preference (Thompson sampling, as in `policy_v0`); a national-chain penalty from a Nosh-maintained, versioned list of national chains (local chains are not penalized). The penalty is large enough that a listed chain wins only when no other candidate clears the floor.
+- **Determinism:** candidates are sorted by provider ID before sampling and tie-breaking.
+- Star rating is never maximized. The `highly_rated` reason code is removed.
+
+### Alternatives rejected
+
+- **Maximize rating:** surfaces famous places and works against discovering lesser-known restaurants.
+- **Exclude chains outright:** removes the fallback when nothing else is open nearby.
+- **Use the provider's chain field:** Google has none; Foursquare's does not distinguish national from local chains.
+
+### Consequences
+
+Weights and the chain list are versioned with the policy. RECOMMENDATIONS.md documents the components once implemented.
+
+## D025 — "Been here already" on the card replaces bulk onboarding classification
+
+- **Status:** Accepted (not yet implemented)
+- **Date:** 2026-10-20
+
+### Decision
+
+The suggestion card gets a secondary "Been here already" action alongside the three primary actions. It marks the place visited before Nosh (D018 provenance: never counts toward the North Star), excludes it, and shows the next proposal. It is recorded as its own idempotent event, not as Another.
+
+### Alternatives rejected
+
+- **Bulk onboarding classification of nearby places:** requires a fixed neighborhood, which D020 removes, and is the most tedious onboarding step.
+
+### Consequences
+
+The context-scoped onboarding endpoints are replaced. Another becomes a cleaner signal because "already been" is separated from it.
+
+## D026 — Lunch budget is a per-meal price ceiling
+
+- **Status:** Accepted (not yet implemented)
+- **Date:** 2026-10-20
+
+### Decision
+
+The onboarding survey asks for a typical per-meal ceiling. It is a hard filter and a price-fit component in `policy_v1`. Phase one does not track spending.
+
+### Alternatives rejected
+
+- **Monthly spend tracking:** requires entering an amount at every confirmation, adding friction to the step most likely to be skipped, and adds a finance feature to the MVP.
+
+## D027 — Retire the curated-catalog plan
+
+- **Status:** Accepted
+- **Date:** 2026-10-20
+
+### Decision
+
+Do not build the Overture-seeded curated catalog proposed in the 2026-10-19 research report. The 20 fictional SF fixtures remain only as data for the test place provider.
+
+### Consequences
+
+`jobs/ingest_places` loses its product role and is kept only to load fixtures until the provider abstraction replaces it.
+
+## D028 — Phase-one operating budget
+
+- **Status:** Accepted
+- **Date:** 2026-10-20
+
+### Decision
+
+Target about $50/month: Supabase Pro (~$25; the free tier pauses idle projects), Apple Developer Program (~$8 amortized), a small API host (~$5–7), and Google Maps Platform within its free monthly caps. At about 330 sessions/month, one Nearby Search Enterprise call per session fits inside the 1,000 free calls, and live card and history details fit inside the 5,000 free Place Details Pro calls.
+
+### Consequences
+
+Google Cloud quotas and billing alerts must be set so usage cannot exceed the free caps unnoticed. A larger cohort requires revisiting this decision.

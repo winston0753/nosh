@@ -2,7 +2,7 @@
 
 ## Mission
 
-Implement the phase-one Nosh MVP: an iOS-first app that gives a user one timely, nearby, unvisited restaurant recommendation; supports Go, Another, and Not today; opens Apple Maps; and later confirms whether the visit occurred and was positive.
+Implement the phase-one Nosh MVP: an iOS-first app that gives a user one timely, nearby, unvisited restaurant recommendation; supports Go, Another, and Not today; opens Google Maps (D021); and later confirms whether the visit occurred and was positive.
 
 ## Read these first
 
@@ -19,35 +19,38 @@ The material under `docs/` is historical research. Do not let it override the ca
 
 - Keep the backend a FastAPI modular monolith.
 - Use Expo React Native with TypeScript for the mobile client.
-- Use PostgreSQL with PostGIS; keep pgvector unused in phase one.
+- Use PostgreSQL with PostGIS; pgvector is deferred and absent in phase one (D013).
 - Keep recommendation generation deterministic and independent of LLM calls.
 - Count only confirmed, positively rated, previously unvisited restaurants toward the North Star.
 - Treat Go as intent, not a visit.
 - Treat Another as ambiguous weak feedback, not a strong cuisine rejection.
 - Treat Not today only as timing feedback.
-- Use Apple Maps for the phase-one handoff.
+- Use a Maps-only handoff in phase one: Google Maps, with Google Places data shown only on a Google map (D021). Persist only provider place IDs and Nosh-owned data (D022).
 - Do not add delivery, ordering, background location, calendar access, social features, RAG, agents, or public-launch scope.
 - Update the canonical documents in the same change whenever implementation changes a documented contract or decision.
 
-## Status (as of 2026-10-13)
+## Status (as of 2026-10-20)
 
 | Milestone | Status |
 |---|---|
-| 1 — Repository and backend foundation | **Complete** (local; uncommitted until the user commits) |
+| 1 — Repository and backend foundation | **Complete** (merged to `main` via PR #1) |
 | 2 — Deterministic suggestion API | **Complete** |
 | 3 — Expo vertical slice | **Partially complete** — local vertical slice implemented; tester-readiness work remains |
 | 4 — Notifications and private cohort readiness | Not started; not next (only the `device_tokens` and `notification_deliveries` tables exist) |
 
-The current checkpoint is **Milestone 0.1 — Working Local Foundation**: the local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. It is suitable for a source-control checkpoint but not for TestFlight or external testers.
+The current checkpoint is **Milestone 0.1 — Working Local Foundation**, merged to `main` through PR #1: the local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. A correctness-hardening pass (onboarding provenance, honest visit confirmation, neutral priors, strict context validation, importer layout, atomic place-state writes) followed on branch `milestone-0.1-correctness-hardening`; see `notes.md` 2026-10-16. It is suitable for source control but not for TestFlight or external testers.
 
-**Next: complete Milestone 3.** Remaining work:
+On 2026-10-20 the product direction changed to current-location-first with live Google Places data (D019–D028; evidence in `docs/research/2026-10-20-place-data-and-map-terms.md`). The hardening pass is committed on `milestone-0.1-correctness-hardening` (`109b124`) and is not yet merged to `main`.
 
-1. Replace the local UUID auth adapter with Supabase passwordless email authentication in the mobile app.
-2. Let users select location, radius, and notification days; context creation currently hardcodes the SF Mission coordinate, 1,600 m, and every day.
-3. Persist the current suggestion for offline use.
-4. Queue idempotent response writes during transient network failures.
-5. Configure an EAS development/TestFlight build.
-6. Replace the 1×1 placeholder app and notification icons.
+**Next: complete Milestone 3.** Remaining work, in order (each a reviewable change):
+
+1. Upgrade Expo SDK 53 → 57 (D019); TestFlight uploads require Xcode 26.
+2. Supabase passwordless email authentication in the mobile app, replacing the local UUID adapter, with per-user query keys and cache clearing on sign-out and deletion.
+3. Meal schedule (weekday lunch default, dinner opt-in, per-meal price ceiling) and optional Home/Work fallback spots replace dining contexts; sessions keyed by user and meal window (D020, D026).
+4. Place-provider abstraction with a Google Places implementation and a fixture implementation for tests; `policy_v1` ranking (D021, D022, D024); Been here already (D025). Settle first how a visit's cuisine label is captured without storing Google-derived data (D022).
+5. Mobile flow: foreground location at open time, Google map and attribution on the card, Google Maps handoff, live history details.
+6. Offline resilience: persist session and proposal identifiers and queue idempotent writes (provider content is not cached, D022).
+7. EAS development/TestFlight build, a real bundle identifier, and real app and notification icons.
 
 Milestone 4 begins only after Milestone 3 is complete.
 
@@ -124,15 +127,15 @@ The original instruction was to start with Milestone 1 only. That foundation now
 The MVP is complete when a private tester can:
 
 1. sign in;
-2. create a dining context;
-3. classify initial places;
+2. set a meal schedule (weekday lunch by default);
+3. mark a suggested place Been here already;
 4. receive one valid suggestion;
 5. choose Go, Another, or Not today;
-6. open Apple Maps;
+6. open Google Maps;
 7. confirm or deny the visit later;
 8. rate a confirmed visit;
 9. view history and monthly positive-new-visit progress;
 10. change notification settings or delete their account;
-11. complete the flow without receiving a visited, excluded, inactive, out-of-radius, or repeated restaurant.
+11. complete the flow without receiving a visited, excluded, closed, out-of-range, over-budget, or repeated restaurant.
 
 When an ambiguity conflicts with the canonical documents, stop and surface it as a proposed entry in `DECISIONS.md` rather than silently choosing a new product direction.

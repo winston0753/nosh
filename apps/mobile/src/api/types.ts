@@ -101,7 +101,17 @@ export interface OnboardingPlace {
   state: 'unknown' | 'visited' | 'not_interested';
 }
 
+export type PlaceStateValue = 'visited' | 'not_interested' | 'unknown';
+
+export interface PlaceState {
+  place_id: string;
+  state: PlaceStateValue;
+  source: 'onboarding' | 'confirmation' | 'manual' | 'import';
+  was_visited_before_nosh: boolean;
+}
+
 export interface NoshApiError {
   code: string;
   message: string;
+  field?: string | null;
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -12,10 +13,18 @@ from sqlalchemy.orm import selectinload
 
 from app.contexts.models import DiningContext
 from app.contexts.service import get_context_for_user
-from app.core.errors import ConflictError, ForbiddenError, InvalidStateError, NotFoundError
+from app.contexts.validation import check_meal_window_key
+from app.core.errors import (
+    ConflictError,
+    ForbiddenError,
+    InvalidStateError,
+    NotFoundError,
+    ValidationFailedError,
+)
 from app.places.models import Cuisine, Place, PlaceCuisine
 from app.places.service import build_candidates
 from app.recommendations.engine import recommend
+from app.recommendations.priors import build_cuisine_stats
 from app.recommendations.types import CuisineStats, NoCandidatesResult, RecommendationResult
 from app.suggestions.models import Proposal, ProposalResponse, SuggestionSession
 from app.suggestions.schemas import ProposalResponse_Schema
@@ -23,6 +32,19 @@ from app.suggestions.schemas import ProposalResponse_Schema
 # Unique constraints on proposal_responses (migrations 0001 and 0003).
 _CLIENT_EVENT_ID_CONSTRAINT = "proposal_responses_client_event_id_key"
 _PROPOSAL_RESPONSE_CONSTRAINT = "uq_proposal_responses_proposal_id"
+
+
+@dataclass(frozen=True)
+class RecordedResponse:
+    """Result of recording (or replaying) a proposal response."""
+
+    response: ProposalResponse
+    session_state: str
+    next_proposal: ProposalResponse_Schema | None
+
+    @property
+    def no_candidates(self) -> bool:
+        return self.session_state == "exhausted"
 
 
 async def get_or_create_session(
@@ -37,9 +59,24 @@ async def get_or_create_session(
     creating a new session.  This serialises simultaneous creation requests for
     the same (context, window) pair so exactly one session is ever inserted.
 
+    The meal-window key must agree with the context: a real calendar date on
+    one of its active days, its meal type, and a valid schedule (422
+    ``validation_error`` otherwise).
+
     If no eligible candidates exist at creation time, sets state=no_candidates.
     """
     ctx = await get_context_for_user(db, dining_context_id, user_id)
+    try:
+        check_meal_window_key(
+            meal_window_key,
+            meal_type=ctx.meal_type,
+            active_days=ctx.active_days,
+            time_zone=ctx.time_zone,
+            local_window_start=ctx.local_window_start,
+            local_window_end=ctx.local_window_end,
+        )
+    except ValueError as exc:
+        raise ValidationFailedError(str(exc), field="meal_window_key") from exc
 
     # Fast-path: read without a lock first.
     result = await db.execute(
@@ -126,7 +163,7 @@ async def record_response(
     user_id: uuid.UUID,
     response: str,
     client_event_id: str,
-) -> tuple[SuggestionSession, ProposalResponse, ProposalResponse_Schema | None]:
+) -> RecordedResponse:
     """Record a Go/Another/Not today response.
 
     Idempotency and concurrency contract
@@ -141,7 +178,9 @@ async def record_response(
     unrelated database error                             → re-raised unchanged
     exactly one response row per proposal
 
-    Session state corresponds to the single winning action.
+    Session state corresponds to the single winning action.  Every replay
+    returns a result equivalent to the original, including the next proposal
+    that an Another produced (see ``_replay_outcome``).
     """
     # --- Fast-path: existing client_event_id ---
     existing = await db.execute(
@@ -259,7 +298,7 @@ async def record_response(
 
     await db.commit()
     await db.refresh(session)
-    return session, resp, next_proposal
+    return RecordedResponse(response=resp, session_state=session.state, next_proposal=next_proposal)
 
 
 async def _generate_next_proposal(
@@ -333,66 +372,40 @@ async def _generate_next_proposal(
 async def _load_cuisine_stats(
     db: AsyncSession, user_id: uuid.UUID
 ) -> dict[uuid.UUID, CuisineStats]:
-    """Build per-cuisine Beta params from visit outcomes and onboarding history."""
+    """Load per-cuisine evidence: pre-Nosh history plus confirmed proposal outcomes.
+
+    History comes only from places flagged ``was_visited_before_nosh``; outcomes
+    only from proposal-backed visits.  See ``app.recommendations.priors``.
+    """
     from app.places.models import UserPlaceState
     from app.visits.models import Visit
 
-    stats: dict[uuid.UUID, CuisineStats] = {}
+    cuisines_result = await db.execute(select(Cuisine.id, Cuisine.slug))
+    cuisine_slugs = {row.id: row.slug for row in cuisines_result.all()}
 
-    cuisines_result = await db.execute(select(Cuisine))
-    cuisine_by_id: dict[uuid.UUID, Cuisine] = {c.id: c for c in cuisines_result.scalars().all()}
-
-    visited_result = await db.execute(
-        select(PlaceCuisine.cuisine_id, func.count(PlaceCuisine.place_id).label("cnt"))
-        .join(
-            UserPlaceState,
-            (UserPlaceState.place_id == PlaceCuisine.place_id)
-            & (UserPlaceState.user_id == user_id)
-            & (UserPlaceState.state == "visited"),
+    history_result = await db.execute(
+        select(PlaceCuisine.cuisine_id)
+        .join(UserPlaceState, UserPlaceState.place_id == PlaceCuisine.place_id)
+        .where(
+            UserPlaceState.user_id == user_id,
+            UserPlaceState.was_visited_before_nosh.is_(True),
+            PlaceCuisine.is_primary.is_(True),
         )
-        .where(PlaceCuisine.is_primary.is_(True))
-        .group_by(PlaceCuisine.cuisine_id)
     )
-    visited_counts: dict[uuid.UUID, int] = {row.cuisine_id: row.cnt for row in visited_result.all()}
-    total_visited = sum(visited_counts.values()) or 1
-    for cuisine_id, cnt in visited_counts.items():
-        c = cuisine_by_id.get(cuisine_id)
-        stats[cuisine_id] = CuisineStats(
-            cuisine_id=cuisine_id,
-            slug=c.slug if c else "",
-            history_frequency=cnt / total_visited,
-        )
+    pre_nosh_cuisine_ids = list(history_result.scalars().all())
 
-    visits_result = await db.execute(
-        select(Visit, PlaceCuisine.cuisine_id)
+    outcomes_result = await db.execute(
+        select(PlaceCuisine.cuisine_id, Visit.rating)
         .join(PlaceCuisine, PlaceCuisine.place_id == Visit.place_id)
-        .where(Visit.user_id == user_id, PlaceCuisine.is_primary.is_(True))
+        .where(
+            Visit.user_id == user_id,
+            Visit.proposal_id.is_not(None),
+            PlaceCuisine.is_primary.is_(True),
+        )
     )
-    for visit, cuisine_id in visits_result.all():
-        if cuisine_id not in stats:
-            c = cuisine_by_id.get(cuisine_id)
-            stats[cuisine_id] = CuisineStats(cuisine_id=cuisine_id, slug=c.slug if c else "")
-        s = stats[cuisine_id]
-        if visit.rating == "positive":
-            stats[cuisine_id] = CuisineStats(
-                cuisine_id=s.cuisine_id,
-                slug=s.slug,
-                confirmed_positive_visits=s.confirmed_positive_visits + 1,
-                confirmed_negative_visits=s.confirmed_negative_visits,
-                history_frequency=s.history_frequency,
-                unvisited_count=s.unvisited_count,
-            )
-        elif visit.rating == "negative":
-            stats[cuisine_id] = CuisineStats(
-                cuisine_id=s.cuisine_id,
-                slug=s.slug,
-                confirmed_positive_visits=s.confirmed_positive_visits,
-                confirmed_negative_visits=s.confirmed_negative_visits + 1,
-                history_frequency=s.history_frequency,
-                unvisited_count=s.unvisited_count,
-            )
+    proposal_outcomes = [(row.cuisine_id, row.rating) for row in outcomes_result.all()]
 
-    return stats
+    return build_cuisine_stats(cuisine_slugs, pre_nosh_cuisine_ids, proposal_outcomes)
 
 
 async def _proposal_to_schema(db: AsyncSession, proposal: Proposal) -> ProposalResponse_Schema:
@@ -443,7 +456,7 @@ async def _replay_client_event(
     proposal_id: uuid.UUID,
     user_id: uuid.UUID,
     response: str,
-) -> tuple[SuggestionSession, ProposalResponse, ProposalResponse_Schema | None]:
+) -> RecordedResponse:
     """Resolve a request whose client_event_id is already stored."""
     if existing.user_id != user_id:
         raise ForbiddenError()
@@ -451,9 +464,7 @@ async def _replay_client_event(
         raise ConflictError("client_event_id already used for a different proposal")
     if existing.response != response:
         raise ConflictError("client_event_id already used for a different action")
-    session_id = await _session_id_for_proposal(db, proposal_id)
-    session = await get_session(db, session_id, user_id)
-    return session, existing, None
+    return await _replay_outcome(db, existing)
 
 
 async def _resolve_answered_proposal(
@@ -461,7 +472,7 @@ async def _resolve_answered_proposal(
     stored: ProposalResponse,
     user_id: uuid.UUID,
     response: str,
-) -> tuple[SuggestionSession, ProposalResponse, ProposalResponse_Schema | None]:
+) -> RecordedResponse:
     """Resolve a request for a proposal that already has a response."""
     if stored.user_id != user_id:
         raise ForbiddenError()
@@ -469,13 +480,40 @@ async def _resolve_answered_proposal(
         raise ConflictError(
             f"A different action ({stored.response!r}) already recorded for this proposal"
         )
-    session_id = await _session_id_for_proposal(db, stored.proposal_id)
-    session = await get_session(db, session_id, user_id)
-    return session, stored, None
+    return await _replay_outcome(db, stored)
 
 
-async def _session_id_for_proposal(db: AsyncSession, proposal_id: uuid.UUID) -> uuid.UUID:
-    result = await db.execute(
-        select(Proposal.suggestion_session_id).where(Proposal.id == proposal_id)
+async def _replay_outcome(db: AsyncSession, stored: ProposalResponse) -> RecordedResponse:
+    """Reconstruct the result the original request returned.
+
+    The session may have moved on since (e.g. Another followed by Go on the
+    next proposal), so the result is derived from the stored response rather
+    than the current session state:
+
+    - Go → ``accepted``; Not today → ``skipped`` (closed sessions never change).
+    - Another → the proposal it generated, i.e. the next sequence number in the
+      same session, with state ``active``; or ``exhausted`` when it generated
+      none.  Only the latest proposal can be unanswered, so sequence + 1 is
+      always the one this Another produced.
+    """
+    if stored.response == "go":
+        return RecordedResponse(response=stored, session_state="accepted", next_proposal=None)
+    if stored.response == "not_today":
+        return RecordedResponse(response=stored, session_state="skipped", next_proposal=None)
+
+    answered = await db.get(Proposal, stored.proposal_id)
+    assert answered is not None  # FK guarantees the proposal exists
+    following = await db.execute(
+        select(Proposal).where(
+            Proposal.suggestion_session_id == answered.suggestion_session_id,
+            Proposal.sequence_number == answered.sequence_number + 1,
+        )
     )
-    return result.scalar_one()
+    next_row = following.scalar_one_or_none()
+    if next_row is None:
+        return RecordedResponse(response=stored, session_state="exhausted", next_proposal=None)
+    return RecordedResponse(
+        response=stored,
+        session_state="active",
+        next_proposal=await _proposal_to_schema(db, next_row),
+    )

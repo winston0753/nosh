@@ -1,5 +1,92 @@
 # Project Notes
 
+## 2026-10-20 — Audit, architecture review, and direction change (docs only)
+
+Started from branch `milestone-0.1-correctness-hardening` with the 2026-10-16 hardening pass still uncommitted (31 modified files, root `jobs/` deleted, new tests and modules untracked). No application code, dependencies, or migrations were changed; the development database was not touched. The hardening pass was then committed alone as `109b124` (staged from reconstructed pre-edit document versions so these document changes stay separate); these document changes are not committed.
+
+### Audit findings
+- **Expo SDK 53 cannot ship to TestFlight as is:** App Store Connect has required Xcode 26 / iOS 26 SDK builds since 2026-04-28; Expo recommends SDK 54+. Latest is SDK 57 (React Native 0.86).
+- **Stale documents (fixed here):** ARCHITECTURE listed `DELETE /v1/me` (actual `DELETE /v1/me/product-data`) and unbuilt device routes without marking them; README said 13 endpoints (16 routes exist), described auth as HS256 only (JWKS is implemented), and required Node 20 (end of life); ARCHITECTURE claimed an OpenAPI-generated client (`packages/api-client/` is empty) and Python 3.12+ (`requires-python` is 3.11+); CI lacked `alembic check`.
+- **Code issues confirmed (not fixed; addressed by the planned work):** `highly_rated` comes from fictional `quality_score`; cuisine sampling depends on candidate order and the radius query sorts only by distance; `exclusion_counts` is always empty; `context_fit` ignores meal type; TanStack query keys are not scoped per user; `mutations: { retry: 1 }` applies to non-idempotent context creation; Another reads current context settings; disabled contexts can open sessions.
+
+### Decisions (D019–D028)
+- **D019** upgrade Expo SDK 53 → 57.
+- **D020** current location first; a meal schedule (weekday lunch default, dinner opt-in) and optional Home/Work fallback spots replace dining contexts.
+- **D021** Google Places end to end: live candidates and signals, Google map and attribution, Go opens Google Maps (supersedes D007's Apple Maps handoff and D008's curated catalog).
+- **D022** persist only provider IDs and Nosh-owned data.
+- **D023** notifications are location-free nudges.
+- **D024** `policy_v1`: quality floor, hidden-gem boost, price fit, national-chain penalty, deterministic ordering.
+- **D025** Been here already on the card replaces bulk onboarding classification.
+- **D026** per-meal price ceiling, no spend tracking.
+- **D027** curated-catalog plan retired.
+- **D028** ~$50/month budget.
+
+Evidence and quotations are in `docs/research/2026-10-20-place-data-and-map-terms.md`. In short, Apple MapKit and the Apple Maps Server API have no ratings, hours, or price. Google forbids using Places content with a non-Google map (Service Specific Terms §14.2). Foursquare forbids co-mingling its ranking signals with Nosh's own (Master Terms §7.5.7). Yelp starts at $229/month. Overture has no ratings or hours.
+
+### Documents changed
+DECISIONS (D007, D008, D017, and D018 statuses; D019–D028), PRODUCT (summary, principle 6, journey, F2–F8, F11, edge cases, non-goals), ARCHITECTURE (stack, layout, components, planned schema, endpoints, notifications, new §17 provider terms), RECOMMENDATIONS (`policy_v1` notice and known `policy_v0` defects), IMPLEMENTATION_HANDOFF and CLAUDE/AGENTS (kept identical; direction change and the new Milestone 3 order), README, and CI (`alembic check` step; Node 22). The 2026-10-19 report moved from `reports/` to `docs/research/` and is marked superseded.
+
+### Open questions
+- How a visit's cuisine label is captured for cuisine learning without storing Google-derived data. Recommended: the rating step asks the user to confirm a pre-filled cuisine.
+- The real iOS bundle identifier (`com.nosh.app` is a placeholder).
+- Whether Google's "modify search results" clause (ToS §3.2.3(g)) covers filtering and re-ranking. Clarify with Google before any public launch.
+- Untracked `.agents/`, `skills-lock.json`, `research_notes/`, and two unrelated files in `reports/` are not project material and remain uncommitted.
+
+## 2026-10-16 — Correctness hardening (branch `milestone-0.1-correctness-hardening`)
+
+Started from `main` at `de67821` (PR #1 merged), clean tree, synchronized with `origin/main`. Every finding below was reproduced before it was changed. Not committed.
+
+### Reproduced findings
+- Onboarding called `PUT /v1/places/{id}/state`, which always wrote `source=manual`, so `was_visited_before_nosh` stayed FALSE; a later Nosh visit to the same restaurant counted as a North Star "new" visit.
+- Confirmation set its rating state before `createVisit` resolved and `onSuccess` navigated away, so "Thanks" never reflected the server; each attempt built a new `visited_at`.
+- A user with no onboarding history got `Beta(1, 5)` (default `history_frequency=0.0`), not the documented `Beta(1, 1)`; history was built from every `state='visited'` row, double-counting post-Nosh visits as history and as outcomes, and manual visits updated cuisine preference contrary to D015.
+- Contexts accepted `25:99`, unknown zones, `[0, 0, 9]`, overnight and empty windows; sessions accepted `2026-02-30#lunch` for a dinner context.
+- `python -m jobs.ingest_places.importer` failed: `ModuleNotFoundError: No module named 'app'` (mixed `services.api.app` and `app` imports).
+- Unknown place IDs raised an FK `IntegrityError` (500). First-time place-state writes were SELECT-then-INSERT: 29 of 30 concurrent rounds failed with a primary-key `IntegrityError`. Visit pagination used `visited_at <` only, skipping timestamp ties. Replaying Another returned `next_proposal: null`.
+
+### Changes
+- **Onboarding provenance (D018):** new `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state` records `source=onboarding`; Been sets `was_visited_before_nosh` permanently; place must be active and within the context radius (`422 place_not_in_context`). The manual endpoint never sets the flag. Responses now include `was_visited_before_nosh`. Mobile onboarding uses the new endpoint.
+- **Atomic place states:** `upsert_user_place_state` is one `INSERT … ON CONFLICT DO UPDATE` that ORs the provenance flag; used by onboarding, manual edits, and visit confirmation (duplicate helper in visits removed).
+- **Stable errors:** unknown places → `404 not_found` (place-state and visit endpoints). Schema validation now returns `{"code": "validation_error", "message", "field", "detail": [...]}` (FastAPI's list kept under `detail`); `NoshError` carries an optional `field`.
+- **Context validation (D016):** `app/contexts/validation.py` (pure). Create and update validate strict `HH:MM`, loadable IANA zones, unique `StrictInt` days 0–6, end strictly after start (overnight still rejected); PATCH re-checks against the stored bound. Session creation checks key date, meal type, active weekday, and the stored schedule.
+- **Priors:** `app/recommendations/priors.build_cuisine_stats` (pure). `history_frequency=None` means no history → `Beta(1, 1)`; history only from `was_visited_before_nosh`; outcomes only from proposal-backed visits. Kept as `policy_v0` because this restores the documented policy; earlier sessions created with the buggy prior are not replayable bit-for-bit (dev data only).
+- **Responses:** `record_response` returns `RecordedResponse`; replays reconstruct the original result (Another → the proposal it generated at sequence + 1, or `exhausted`).
+- **Pagination:** `(visited_at DESC, id DESC)` with a tuple keyset cursor.
+- **Importer:** moved from root `jobs/` to `services/api/jobs/` (same uv project and `app` package); supported invocation documented in README; CI ruff/mypy now cover `jobs/`.
+- **Confirmation screen:** `useVisitConfirmation` freezes the request on first tap; phases choosing → saving → saved/failed; "Thanks" only on server success (showing the stored rating); retry re-sends the identical body; double taps send once; a link without `proposalId` refuses to write.
+- **Docs:** ARCHITECTURE (contracts, auth, pgvector, layout), DECISIONS (D005 wording, D016–D018), PRODUCT (F2/F3), RECOMMENDATIONS (prior provenance), IMPLEMENTATION_HANDOFF (merged status), AGENTS/CLAUDE (kept identical), README, root `.env.example`. Supabase: mobile uses project URL + publishable key; API verifies via JWKS with no shared secret; HS256 secret is legacy-only.
+
+### Tests added or changed
+- API unit: `test_context_validation.py` (70), `test_priors.py` (7), `test_job_imports.py` (3).
+- Integration (+17): same-restaurant onboarding → Nosh visit excluded from progress; provenance survives reclassification/manual edits; manual edit never sets the flag; onboarding negative paths (404/403/422); unknown place 404; stats with no history / onboarding history / later positive, negative, and manual visits; PATCH window merge; session key consistency; legacy invalid contexts; pagination ties; cursor ownership; Another replay (immediate, other event ID, after the session moved on, after exhaustion, other user); two 10-round concurrency tests for first-time place-state writes.
+- Changed: `test_session_key_format_accepted` now uses matching meal types (mismatches are rejected by design); `test_progress_excludes_pre_nosh_onboarding_place` uses the onboarding endpoint; concurrency tests use `RecordedResponse`.
+- Mobile: `src/__tests__/confirmationScreen.test.tsx` (7) with local `react-test-renderer` typings. Against the original code, 11 of 12 targeted integration tests and 6 of 7 mobile tests fail.
+
+### Verification (actual results)
+| Check | Result |
+|---|---|
+| Root `uv lock --check`; spike tests | ✅ 12 passed |
+| API `uv lock --check` | ✅ |
+| `ruff check app/ jobs/ tests/`; `ruff format --check` | ✅ All checks passed; 58 files formatted |
+| `mypy app/ jobs/ --strict` | ✅ 46 source files, no issues |
+| API unit tests | ✅ 148 passed, 46 deselected |
+| `alembic downgrade base` → `upgrade head` → `check` (5433 only) | ✅ "No new upgrade operations detected"; head 0004 |
+| Integration + concurrency (5433) | ✅ 46 passed |
+| Importer via documented invocation (5433) | ✅ "Fixture data loaded." |
+| Mobile `npm ci`, typecheck, ESLint | ✅ |
+| Jest | ✅ 43 passed (2 suites) |
+| `npx expo install --check` | ✅ Dependencies are up to date |
+| `npx expo-doctor` | ✅ 18/18 |
+| `git diff --check` | ✅ |
+
+No migrations were added. The development database (5432) was not modified.
+
+### Open questions
+- Should session keys be bounded to a window around "today" in the context zone? Not enforced (D016).
+- Onboarding Been is irreversible by design (D018); a mistaken tap needs an audited admin correction path.
+- A place classified Been after it was already confirmed through Nosh also becomes pre-Nosh, removing that North Star credit.
+- An untracked `research_notes/` directory appeared during the session; it was not created or modified by this work.
+
 ## 2026-10-13 — Milestone status correction
 
 The earlier corrective pass overstated progress by naming Milestone 4 as next. Corrected status: Milestones 1–2 complete; Milestone 3 partially complete (local vertical slice implemented; Supabase passwordless auth, location/radius/day selection, offline suggestion persistence, queued idempotent writes, EAS/TestFlight build, and real icons remain); Milestone 4 not started and not next. The checkpoint stays **Milestone 0.1 — Working Local Foundation**: suitable for source control, not for TestFlight or external testers. Mobile `npm audit`: 60 findings (16 moderate, 44 high); `--omit=dev`: 37 (16 moderate, 21 high); no critical; `npm audit fix` not run. Documentation only; no runtime or dependency changes.

@@ -2,12 +2,12 @@
 
 - **Status:** Phase-one baseline
 - **Version:** 0.1
-- **Last updated:** 2026-10-12
+- **Last updated:** 2026-10-20
 - **Product name:** Nosh
 
 ## 1. Product summary
 
-Nosh is a proactive restaurant-discovery app that helps a person try more good restaurants near the places where they regularly eat. Around a chosen meal window, it presents one nearby restaurant the person has not tried, supports a low-friction request for another option, hands accepted suggestions to Maps, and later asks whether the visit happened and was good.
+Nosh is a proactive restaurant-discovery app that helps a person try more good restaurants wherever they are at meal time. Around their meal window, it presents one nearby restaurant the person has not tried, supports a low-friction request for another option, hands accepted suggestions to Maps, and later asks whether the visit happened and was good.
 
 The product is intentionally different from restaurant search products that begin with a blank search box or a long list. Nosh reduces a recurring decision to one timely recommendation and learns from the outcome.
 
@@ -36,20 +36,20 @@ The long-term product may support free-text cravings, natural-language meal logg
 3. **Novelty must not sacrifice quality.** The objective is a new restaurant the user liked, not novelty alone.
 4. **Interruptions must earn their place.** Notification frequency and timing are user-controlled.
 5. **The meal-time path is deterministic.** It must not depend on an LLM response.
-6. **Every recommendation must be reconstructable.** Store its inputs, score components, and policy version.
+6. **Every recommendation must be reconstructable from what we may store.** Store place identifiers, ranks, Nosh-owned score components, and the policy version; provider content is fetched live and not stored (D022).
 7. **Privacy grows with demonstrated value.** Do not request background location or calendar access in phase one.
 
 ## 5. Target users
 
 ### Primary user
 
-The founder, dogfooding the product in one or two familiar neighborhoods.
+The founder, dogfooding the product at weekday lunch wherever they happen to be.
 
 Characteristics:
 
 - wants to try more local restaurants;
 - repeatedly decides where to eat near home or work;
-- is willing to classify some previously visited places during onboarding;
+- is willing to mark places they have already been when Nosh suggests them;
 - accepts a scheduled meal-time prompt;
 - will confirm whether an accepted suggestion became a real visit.
 
@@ -65,21 +65,20 @@ Phase one is not designed for restaurants, delivery couriers, large social group
 - **When the suggestion is wrong,** let me get another option immediately without restarting the flow.
 - **When I visit somewhere new,** remember it and show my neighborhood progress.
 - **When I do not want a suggestion,** let me decline without incorrectly changing my food preferences.
-- **When I want control,** let me change the neighborhood, meal window, radius, or notification setting.
+- **When I want control,** let me change my meal windows, price ceiling, fallback spots, or notification setting.
 
 ## 7. Phase-one user journey
 
 1. The user creates an account using passwordless email authentication.
-2. The user creates at least one dining context, such as Home Dinner or Office Lunch.
-3. The user selects a location, search radius, meal window, and notification days.
-4. The user marks a small set of nearby restaurants as Been, Not been, or Not interested.
-5. Before the meal window, the service creates a suggestion from the curated place catalog.
-6. The notification and app display one restaurant with cuisine, distance, and a short factual reason.
-7. The user chooses Go, Another, or Not today.
-8. Go opens the restaurant in Apple Maps.
-9. After the meal window, the app asks whether the visit occurred.
-10. A confirmed visit receives a simple positive or negative rating.
-11. The visit history and neighborhood progress update only after confirmation.
+2. A short survey sets the meal schedule (weekday lunch by default; dinner optional), a typical per-meal price ceiling, and optional Home and Work fallback spots (D020, D026).
+3. At meal time, a notification nudges the user; it names no restaurant (D023).
+4. When the user opens the app, it uses the device's current foreground location (or a fallback spot) and creates a suggestion from live place data (D021).
+5. The app displays one restaurant with cuisine, distance, a Google map, and a short factual reason.
+6. The user chooses Go, Another, or Not today, or marks the place Been here already (D025).
+7. Go opens the restaurant in Google Maps.
+8. After the meal window, the app asks whether the visit occurred.
+9. A confirmed visit receives a simple positive or negative rating.
+10. The visit history and progress update only after confirmation.
 
 ## 8. MVP features and requirements
 
@@ -90,38 +89,43 @@ Phase one is not designed for restaurants, delivery couriers, large social group
 - Allow sign-out and account-data deletion.
 - Private TestFlight distribution is sufficient for phase one.
 
-### F2. Dining contexts
+### F2. Meal schedule and location (D020)
 
-- Create, edit, disable, and delete a named context.
-- Required fields: name, map point, radius, meal type, local time window, active days, and time zone.
-- Support at least two contexts per user, such as Office Lunch and Home Dinner.
+> Implementation status: the current code still uses dining contexts (a fixed map point, radius, and schedule per context). D020 replaces them.
+
+- An onboarding survey sets the meal schedule: weekday lunch by default, dinner opt-in, active days, local window, and IANA time zone.
+- The local time window must end after it starts on the same day; overnight windows are not supported in phase one (D016).
+- Suggestions use the device's current foreground location, requested with when-in-use permission at the moment the app is opened (D017).
+- Users may save optional Home and Work spots, used only when location permission is denied or a fix is unavailable.
 - Do not collect continuous or background location.
 
-### F3. Onboarding history
+### F3. Prior visit history (D025)
 
-- Present nearby restaurants from the curated catalog.
-- Let the user mark Been, Not been, or Not interested.
-- Allow onboarding to be skipped and resumed.
-- Never count a restaurant as visited solely because it appeared during onboarding.
+> Implementation status: the current code has a bulk onboarding classification step (D018). D025 replaces it.
 
-### F4. Place catalog
+- The suggestion card offers a secondary Been here already action.
+- A place marked Been here already was visited before Nosh: it is excluded from future suggestions and never counts toward the North Star, even after a later Nosh visit (D018).
+- Never count a restaurant as visited solely because it was suggested.
 
-- Seed a small, reviewed restaurant dataset for the initial neighborhoods.
-- Store source identifier, name, location, cuisines, address, status, and source timestamps.
-- Allow an administrator to correct or deactivate a place.
-- Clearly tolerate missing rating, hours, photo, menu, and ordering information.
+### F4. Place data (D021, D022)
+
+> Implementation status: the current code reads a 20-place fictional fixture catalog. D021 replaces it with live Google Places data; the fixtures remain test data (D027).
+
+- Candidates, ratings, hours, price level, and types come live from Google Places at suggestion time.
+- Store only the provider place identifier and Nosh-owned data; never store provider names, addresses, ratings, hours, or types.
+- Tolerate missing rating, hours, price, and photos; a missing value is neutral, never a positive claim.
 
 ### F5. Suggestion generation
 
-- Generate exactly one current suggestion per dining context and meal window.
-- Exclude visited, not-interested, inactive, out-of-radius, and already rejected-in-session places.
-- Save the candidate set, chosen place, score components, and ranking-policy version.
+- Generate exactly one current suggestion per user and meal window.
+- Exclude visited, not-interested, closed, out-of-range, over-budget, and already rejected-in-session places.
+- Save the ranked place identifiers, chosen place, Nosh-owned score components, and ranking-policy version (D022).
 - Return an explicit no-candidate state instead of repeating an invalid option.
 - Complete without an LLM call.
 
 ### F6. Suggestion card
 
-- Show restaurant name, primary cuisine, approximate distance, address, and a factual reason.
+- Show restaurant name, primary cuisine, approximate distance, address, a factual reason, and the place on a Google map with Google attribution (D021).
 - Show only data the product is allowed to store and display.
 - Display Go, Another, and Not today as the primary actions.
 - Avoid presenting an unsupported claim such as “best” or “perfect for you.”
@@ -129,17 +133,17 @@ Phase one is not designed for restaurants, delivery couriers, large social group
 ### F7. Notifications
 
 - Respect the configured days, local meal window, time zone, and enabled state.
-- Support the same Go, Another, and Not today semantics as the in-app card where the platform permits.
-- Deep-link into the correct suggestion session.
-- Never send more than one initial notification for the same context and meal window.
+- The meal-time notification is a nudge that names no restaurant; the suggestion is created when the user opens the app (D023).
+- Never send more than one initial notification for the same user and meal window.
 
 ### F8. Response handling
 
-- Go records intent and opens Apple Maps.
+- Go records intent and opens Google Maps (D021).
 - Another returns the next eligible proposal in the same session.
 - Not today closes the session and is treated as timing feedback, not cuisine rejection.
 - Every write is idempotent so retries cannot create duplicate responses.
 - Phase one treats Another as ambiguous, weak feedback; it must not create a strong cuisine dislike.
+- Been here already marks the place visited before Nosh, excludes it, and returns the next proposal; it is not recorded as Another (D025).
 
 ### F9. Visit confirmation
 
@@ -158,8 +162,8 @@ Phase one is not designed for restaurants, delivery couriers, large social group
 
 ### F11. Preferences and controls
 
-- Enable or disable each dining context and all notifications.
-- Change meal windows, days, radius, and map point.
+- Enable or disable lunch, dinner, and all notifications.
+- Change meal windows, days, price ceiling, and Home and Work spots.
 - View and edit Been and Not interested place states.
 - Provide account deletion and a plain-language summary of stored data.
 
@@ -167,7 +171,7 @@ Phase one is not designed for restaurants, delivery couriers, large social group
 
 The client and server must record these distinct events:
 
-- context created or changed;
+- meal schedule created or changed;
 - suggestion session created;
 - place proposed;
 - notification delivered when known;
@@ -236,18 +240,18 @@ These are phase-one hypotheses, not established benchmarks:
 - A place closes, moves, changes its name, or is temporarily unavailable.
 - A restaurant lies exactly on the radius boundary.
 
-Expected behavior: explain the shortage, allow the user to widen the radius or switch context, and never silently reuse an invalid candidate.
+Expected behavior: explain the shortage, offer a fallback spot when location is unavailable, and never silently reuse an invalid candidate.
 
 ### Time and notifications
 
 - The phone changes time zone.
 - Daylight-saving time creates a missing or repeated local hour.
-- Multiple dining contexts overlap.
+- Lunch and dinner windows are configured close together.
 - A suggestion was generated before the user changed a meal window or radius.
 - The notification is opened after the meal window.
 - Notification permission is denied, provisional, or later revoked.
 - A notification is delivered twice or an action is replayed.
-- The user disables one context but not another.
+- The user disables dinner but not lunch.
 
 Expected behavior: use the context's IANA time zone, version scheduled work, deduplicate by context and meal window, and keep the in-app experience functional without notifications.
 
@@ -267,15 +271,15 @@ Expected behavior: preserve the event history, make writes idempotent, allow cor
 
 - The device is offline when a notification is opened.
 - The API times out after recording a response but before returning it.
-- Apple Maps is unavailable or the place cannot be matched.
+- Google Maps is unavailable or the place no longer resolves.
 - The app is terminated when a notification action occurs.
 - The mobile app and API schema versions differ.
 
-Expected behavior: cache the current card, queue response writes, use idempotency keys, provide an address fallback, and reject unsupported client versions gracefully.
+Expected behavior: keep the current session and proposal identifiers, queue response writes, use idempotency keys, explain that card details need a connection (provider content may not be cached, D022), and reject unsupported client versions gracefully.
 
 ### Privacy and account state
 
-- A user deletes a context containing historical visits.
+- A user deletes a fallback spot or changes their meal schedule after visits exist.
 - A user deletes their account while scheduled jobs are pending.
 - An email link is opened on a different device.
 - Precise home or work coordinates appear in logs or analytics.
@@ -294,6 +298,7 @@ Do not build the following in phase one:
 - public App Store launch or Android launch requirements;
 - social feeds, following, shared lists, group voting, or partner profiles;
 - restaurant accounts, promoted listings, advertising, or monetization;
+- monthly spend tracking or budgeting;
 - free-text craving RAG, menu embeddings, review summarization, or LLM explanations;
 - a conversational concierge, MCP server, LangGraph workflow, or autonomous agent;
 - photo uploads, menu ingestion, review hosting, or user-generated public content;

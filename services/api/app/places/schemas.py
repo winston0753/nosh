@@ -38,3 +38,6 @@ class PlaceStateResponse(BaseModel):
     place_id: uuid.UUID
     state: str
     source: str
+    was_visited_before_nosh: bool
+
+    model_config = {"from_attributes": True}

@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contexts.models import DiningContext
 from app.contexts.schemas import ContextCreate, ContextResponse, ContextUpdate
-from app.core.errors import ForbiddenError, NotFoundError
+from app.contexts.validation import validate_window
+from app.core.errors import ForbiddenError, NotFoundError, ValidationFailedError
 
 
 async def create_context(
@@ -55,8 +56,20 @@ async def update_context(
     body: ContextUpdate,
 ) -> ContextResponse:
     ctx = await get_context_for_user(db, context_id, user_id)
+    updates = body.model_dump(exclude_none=True)
+
+    # Either bound may be omitted, so the cross-field rule is checked against
+    # the merged window rather than in the request schema.
+    start = updates.get("local_window_start", ctx.local_window_start)
+    end = updates.get("local_window_end", ctx.local_window_end)
+    if "local_window_start" in updates or "local_window_end" in updates:
+        try:
+            validate_window(start, end)
+        except ValueError as exc:
+            raise ValidationFailedError(str(exc), field="local_window_end") from exc
+
     changed = False
-    for field, value in body.model_dump(exclude_none=True).items():
+    for field, value in updates.items():
         if hasattr(ctx, field):
             setattr(ctx, field, value)
             changed = True
