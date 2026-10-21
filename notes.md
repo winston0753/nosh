@@ -1,5 +1,33 @@
 # Project Notes
 
+## 2026-10-21 — Expo SDK 53 → 58 (D019, branch `expo-sdk-58`)
+
+Started from `main` at `72bb0fb` (PR #2 merged, CI green including the new `alembic check` step). Not committed.
+
+### Correction
+D019 recorded SDK 57 as the latest release. The npm registry shows SDK 58.0.0 shipped on 2026-09-29 (`latest` = 58.0.16), so the upgrade continued to 58 and D019 now says so.
+
+### Steps
+Each step pinned `expo`, applied every version from `npx expo install --check`, and reran typecheck, ESLint, Jest, and Expo Doctor.
+- **54** — all green (Doctor 18/18). A partial `expo install --fix` failed with an `@types/react` peer conflict and was resolved by setting all expected versions at once.
+- **55** — all green (Doctor 20/20).
+- **56** — Doctor flagged the known Hermes V1 memory regression (fixed in SDK 57). The updated `eslint-config-expo` added React Compiler `react-hooks/refs` rules: 4 errors in `useVisitConfirmation.ts`, which read `requestRef.current` during render.
+- **57** — Doctor 21/21. Fixed the lint errors: the displayed rating now falls back to `mutation.variables?.rating` (the frozen request last sent) instead of the ref, and refs are only read in handlers. A clean `npm ci` then failed: Expo's optional `react-dom` peer resolved to 19.3.1, which conflicts with React 19.2.3. `react-dom` is now pinned to the React version, and the lockfile was regenerated with a strict install.
+- **58** — expo 58.0.16, React Native 0.88.0, Expo Router 58.0.24, React 19.3.0, TypeScript 6.0. `jest-expo` 58 no longer installs `react-test-renderer`, so the confirmation-screen suite failed to load. It is now an explicit exact dev dependency (19.3.0). Migrating to `@testing-library/react-native` 14 is a possible follow-up.
+
+### Verification (actual results, SDK 58)
+| Check | Result |
+|---|---|
+| `rm -rf node_modules && npm ci` | ✅ (no `--legacy-peer-deps`) |
+| `npm run typecheck`, `npm run lint` | ✅ |
+| Jest | ✅ 43 passed (2 suites) |
+| `npx expo install --check` | ✅ Dependencies are up to date |
+| `npx expo-doctor` | ✅ 20/20 |
+| `npm audit` | 53 (25 moderate, 28 high, 0 critical) |
+| `npm audit --omit=dev` | 26 (7 moderate, 19 high, 0 critical) |
+
+SDK 58 requires Node `^22.13.0` or `^24.3.0`; CI's `node-version: "22"` resolves to the latest 22.x. No backend, migration, or `app.json` changes.
+
 ## 2026-10-20 — Audit, architecture review, and direction change (docs only)
 
 Started from branch `milestone-0.1-correctness-hardening` with the 2026-10-16 hardening pass still uncommitted (31 modified files, root `jobs/` deleted, new tests and modules untracked). No application code, dependencies, or migrations were changed; the development database was not touched. The hardening pass was then committed alone as `109b124` (staged from reconstructed pre-edit document versions so these document changes stay separate); these document changes are not committed.

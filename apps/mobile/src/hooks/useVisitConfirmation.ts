@@ -104,8 +104,9 @@ export function useVisitConfirmation({
         ? 'failed'
         : 'choosing';
 
+  // `mutation.variables` is the frozen request last sent; refs stay out of render.
   const storedRating = mutation.data?.rating ?? null;
-  const rating = storedRating ?? requestRef.current?.rating ?? null;
+  const rating = storedRating ?? mutation.variables?.rating ?? null;
 
   return { phase, rating, visit: mutation.data, submit, retry };
 }

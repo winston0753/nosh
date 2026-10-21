@@ -40,11 +40,11 @@ The material under `docs/` is historical research. Do not let it override the ca
 
 The current checkpoint is **Milestone 0.1 — Working Local Foundation**, merged to `main` through PR #1: the local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. A correctness-hardening pass (onboarding provenance, honest visit confirmation, neutral priors, strict context validation, importer layout, atomic place-state writes) followed on branch `milestone-0.1-correctness-hardening`; see `notes.md` 2026-10-16. It is suitable for source control but not for TestFlight or external testers.
 
-On 2026-10-20 the product direction changed to current-location-first with live Google Places data (D019–D028; evidence in `docs/research/2026-10-20-place-data-and-map-terms.md`). The hardening pass is committed on `milestone-0.1-correctness-hardening` (`109b124`) and is not yet merged to `main`.
+On 2026-10-20 the product direction changed to current-location-first with live Google Places data (D019–D028; evidence in `docs/research/2026-10-20-place-data-and-map-terms.md`). The hardening pass and these decisions were merged to `main` via PR #2; D019 (Expo SDK 58) is implemented.
 
 **Next: complete Milestone 3.** Remaining work, in order (each a reviewable change):
 
-1. Upgrade Expo SDK 53 → 57 (D019); TestFlight uploads require Xcode 26.
+1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21; TestFlight uploads require Xcode 26.
 2. Supabase passwordless email authentication in the mobile app, replacing the local UUID adapter, with per-user query keys and cache clearing on sign-out and deletion.
 3. Meal schedule (weekday lunch default, dinner opt-in, per-meal price ceiling) and optional Home/Work fallback spots replace dining contexts; sessions keyed by user and meal window (D020, D026).
 4. Place-provider abstraction with a Google Places implementation and a fixture implementation for tests; `policy_v1` ranking (D021, D022, D024); Been here already (D025). Settle first how a visit's cuisine label is captured without storing Google-derived data (D022).

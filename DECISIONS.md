@@ -336,23 +336,24 @@ Onboarding classifications use `PUT /v1/contexts/{context_id}/onboarding-places/
 
 A restaurant marked Been during onboarding never counts toward the North Star, even when later visited through Nosh. A mistaken Been tap therefore cannot be undone by reclassifying; correcting it would need an audited administrative change. The onboarding history prior is built only from flagged places (RECOMMENDATIONS.md §5.1).
 
-## D019 — Upgrade Expo SDK 53 to SDK 57
+## D019 — Upgrade Expo SDK 53 to the latest SDK (58)
 
-- **Status:** Accepted (not yet implemented)
-- **Date:** 2026-10-20
+- **Status:** Implemented (2026-10-21)
+- **Date:** 2026-10-20; corrected 2026-10-21
 
 ### Decision
 
-Upgrade the mobile app from Expo SDK 53 (React Native 0.79, Expo Router 5) to SDK 57 (React Native 0.86), one SDK at a time, before adding the Supabase, location, and map dependencies Milestone 3 needs.
+Upgrade the mobile app from Expo SDK 53 (React Native 0.79, Expo Router 5) to the latest Expo SDK, one SDK at a time, before adding the Supabase, location, and map dependencies Milestone 3 needs. This was first recorded as SDK 57 on the mistaken belief that it was the latest release; SDK 58 shipped on 2026-09-29, so the target is SDK 58 (React Native 0.88, Expo Router 58, React 19.3).
 
 ### Alternatives rejected
 
 - **Stay on SDK 53 with an Xcode 26 EAS image:** since 2026-04-28 App Store Connect accepts only builds made with Xcode 26 and the iOS 26 SDK; Expo warns SDK 53 and older may not build with it and recommends SDK 54 or later.
-- **Upgrade only to SDK 54:** the minimum compliant version, but already three releases behind and certain to need another upgrade during phase one.
+- **Upgrade only to SDK 54:** the minimum compliant version, but already four releases behind and certain to need another upgrade during phase one.
+- **Stop at SDK 57:** compliant and still patched, but one release behind with no offsetting benefit once the upgrade was underway.
 
 ### Consequences
 
-New dependencies are installed once against the final SDK. Expo Router, React Native, and related packages move to the versions SDK 57 pins; CI moves to Node 22 LTS. The npm audit baseline in README must be re-measured.
+New dependencies are installed once against the final SDK. Expo Router, React Native, and related packages move to the versions SDK 58 pins; SDK 58 requires Node `^22.13.0` or `^24.3.0`, and CI runs Node 22. `react-dom` is pinned to the React version so npm cannot resolve Expo's optional `react-dom` peer to an incompatible release, and `react-test-renderer` is an explicit, exact dev dependency because `jest-expo` 58 no longer installs it. The npm audit baseline in README was re-measured.
 
 ## D020 — Current location first; a meal schedule replaces dining contexts
 
