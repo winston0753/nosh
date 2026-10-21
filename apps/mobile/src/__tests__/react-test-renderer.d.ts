@@ -1,6 +1,7 @@
-// Minimal typings for the parts of react-test-renderer (installed transitively
-// by jest-expo, without bundled types) that the screen tests use.  Declared
-// locally to avoid adding @types/react-test-renderer as a dependency.
+// Minimal typings for the parts of react-test-renderer (an explicit dev
+// dependency pinned to the React version; it ships without bundled types) that
+// the screen tests use.  Declared locally to avoid adding
+// @types/react-test-renderer as a dependency.
 declare module 'react-test-renderer' {
   import type { ElementType, ReactElement } from 'react';
 

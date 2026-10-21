@@ -39,14 +39,14 @@ Checkpoint: **Milestone 0.1 — Working Local Foundation**, merged to `main` via
 
 - **Backend:** FastAPI modular monolith in `services/api/` (own uv project, `nosh-api`), SQLAlchemy 2 async + asyncpg, Alembic migrations `0001`–`0004`, `/health/live`, `/health/ready`, OpenAPI, deterministic `policy_v0` engine, suggestion sessions with Go / Another / Not today, visit confirmation, rating, correction, history, progress, and product-data deletion.
 - **Database:** Docker Compose PostGIS 16-3.4. `db` (port 5432, `nosh_dev`) is persistent development data; `db_test` (port 5433, `nosh_test`, `--profile test`) is disposable. pgvector is intentionally absent (D013).
-- **Mobile:** Expo SDK 53 app in `apps/mobile/` with Expo Router `~5.1.11`, React Native 0.79, strict TypeScript, TanStack Query, and (currently) Apple Maps handoff. D019 records the upgrade to SDK 57; do not change Expo, React Native, or Expo Router versions otherwise without a recorded decision.
+- **Mobile:** Expo SDK 58 app in `apps/mobile/` with Expo Router `~58.0.24`, React Native 0.88, React 19.3, strict TypeScript, TanStack Query, and (currently) Apple Maps handoff (D019). Do not upgrade or downgrade Expo, React Native, or Expo Router without a recorded decision.
 - **Jobs:** batch jobs live in `services/api/jobs/` and import the app as `app`; run from `services/api` with `uv run --frozen python -m jobs.ingest_places.importer`.
 - **Contracts added by the hardening pass:** onboarding classification via `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state` (D018); strict context/meal-window validation with `422 validation_error` (D016); atomic `user_place_states` upserts; replay-equivalent responses; `(visited_at, id)` visit pagination.
 - **Tests:** 12 root spike tests, 148 API unit tests, 46 PostgreSQL integration tests (including 6 genuine concurrent-database tests), and 43 mobile Jest tests.
 
 ## Direction change (2026-10-20)
 
-Decisions D019–D028 (evidence: `docs/research/2026-10-20-place-data-and-map-terms.md`) are accepted but **not yet implemented**; the code still reflects the earlier design:
+Decisions D019–D028 (evidence: `docs/research/2026-10-20-place-data-and-map-terms.md`) are accepted. D019 (Expo SDK 58) is implemented; D020–D028 are **not yet implemented**, and the code still reflects the earlier design:
 
 - **Current location first (D020):** a per-user meal schedule (weekday lunch default, dinner opt-in) and optional Home/Work fallback spots replace dining contexts.
 - **Google Places end to end (D021):** live candidates and ranking signals; Google map and attribution on the card; Go opens Google Maps. Never combine Google-selected places with Apple Maps data, maps, or handoff.
@@ -55,9 +55,9 @@ Decisions D019–D028 (evidence: `docs/research/2026-10-20-place-data-and-map-te
 
 ## Next: complete Milestone 3
 
-The correctness-hardening pass is committed on `milestone-0.1-correctness-hardening` (`109b124`), not yet merged to `main`. Next, in order (see `IMPLEMENTATION_HANDOFF.md`):
+The correctness-hardening pass and these decisions were merged to `main` via PR #2. Next, in order (see `IMPLEMENTATION_HANDOFF.md`):
 
-1. Upgrade Expo SDK 53 → 57 (D019); TestFlight uploads require Xcode 26.
+1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21.
 2. Supabase passwordless email authentication, with per-user query keys and cache clearing on sign-out and deletion (the app still uses a local UUID adapter).
 3. Meal schedule, price ceiling, and fallback spots replace dining contexts (D020, D026); context creation currently hardcodes the SF Mission coordinate, 1,600 m, and every day.
 4. Place-provider abstraction (Google + test fixtures), `policy_v1`, and Been here already (D021, D022, D024, D025).

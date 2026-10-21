@@ -19,7 +19,7 @@ All local verification gates pass (2026-10-16, after the correctness-hardening p
 - 46 integration tests (PostGIS + real migrations + 6 concurrent DB tests) — **all pass**
 - 43 mobile Jest tests (TypeScript, ESLint, Expo Doctor 18/18 clean)
 
-Stack: FastAPI + SQLAlchemy 2 async API; Expo SDK 53 mobile app with Expo Router `~5.1.11`.
+Stack: FastAPI + SQLAlchemy 2 async API; Expo SDK 58 mobile app (React Native 0.88, Expo Router `~58.0.24`).
 
 **Next:** complete Milestone 3 (see [Next milestone](#next-milestone)). On 2026-10-20 the product direction changed to current-location-first with live Google Places data (DECISIONS.md D019–D028); the code below still reflects the earlier design.
 
@@ -49,7 +49,7 @@ Proposal-backed visit confirmation requires a prior Go response on the exact pro
 
 - Docker Desktop (for local PostgreSQL) or an accessible PostgreSQL 16+ with PostGIS
 - [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- Node.js 22 LTS and npm (for mobile; Node 20 reached end of life in April 2026)
+- Node.js 22 LTS (`^22.13.0`) or 24 (`^24.3.0`) and npm, for mobile (Expo SDK 58 minimums)
 - Python 3.11+
 
 ---
@@ -236,7 +236,7 @@ git diff --check
 | Go / Another / Not today state machine | Implemented with idempotency |
 | Visit confirmation + rating + history + progress | Implemented |
 | Strict mypy | 0 errors |
-| Mobile app (Expo SDK 53, Expo Router `~5.1.11`) | All MVP screens; TypeScript + ESLint + 43 Jest tests + Expo Doctor pass |
+| Mobile app (Expo SDK 58, Expo Router `~58.0.24`) | All MVP screens; TypeScript + ESLint + 43 Jest tests + Expo Doctor (20/20) pass |
 | Integration tests | 46 tests covering full flow, provenance, validation, replay, pagination, and concurrency; requires PostgreSQL |
 | Place importer | `uv run --frozen python -m jobs.ingest_places.importer` from `services/api` |
 
@@ -252,10 +252,16 @@ git diff --check
 - **Notifications (Milestone 4, not started):** Expo push tokens, scheduler/worker, confirmation prompts.
 - **API hosting vendor:** deferred per D012.
 
-### Dependency audit (mobile, 2026-10-13)
+### Dependency audit (mobile, 2026-10-21, Expo SDK 58)
 
 | Command | Moderate | High | Critical | Total |
 |---|---|---|---|---|
+| `npm audit` | 25 | 28 | 0 | 53 |
+| `npm audit --omit=dev` | 7 | 19 | 0 | 26 |
+
+The findings reach the app through `expo`, `react-native`, and `jest-expo`. The only remedies npm proposes are semver-major downgrades (`expo@44`, `react-native@0.72`, `jest-expo@56`), so `npm audit fix` / `--force` has deliberately not been run. On SDK 53 (2026-10-13) the counts were 60 total and 37 production.
+
+---|---|---|---|---|
 | `npm audit` | 16 | 44 | 0 | 60 |
 | `npm audit --omit=dev` | 16 | 21 | 0 | 37 |
 
@@ -283,7 +289,7 @@ uv run python -m spike.cuisine_policy_sim --users 500
 ## Project structure
 
 ```
-apps/mobile/          Expo SDK 53 React Native iOS-first client (Expo Router ~5.1.11)
+apps/mobile/          Expo SDK 58 React Native iOS-first client (Expo Router ~58.0.24)
 services/api/         FastAPI modular monolith
   app/
     auth/             Supabase JWT validation (JWKS RS256/ES256; legacy HS256) + local-dev UUID adapter
@@ -315,7 +321,7 @@ db/                   Docker init SQL (PostGIS; pgvector deferred per D013)
 
 **Complete Milestone 3 — Expo vertical slice (tester readiness)**, following the 2026-10-20 decisions (evidence in `docs/research/2026-10-20-place-data-and-map-terms.md`):
 
-1. Upgrade Expo SDK 53 → 57 (D019); App Store Connect requires Xcode 26 builds.
+1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21; App Store Connect requires Xcode 26 builds.
 2. Supabase passwordless email authentication in the mobile app (replacing the local UUID adapter), configured with the project URL and publishable key; the API validates tokens via `SUPABASE_URL` + JWKS.
 3. Meal schedule (weekday lunch default, dinner opt-in), per-meal price ceiling, and optional Home/Work fallback spots replace dining contexts (D020, D026).
 4. Live Google Places candidates behind a place-provider abstraction (fixtures in tests), `policy_v1` ranking, and Been here already (D021, D022, D024, D025).
