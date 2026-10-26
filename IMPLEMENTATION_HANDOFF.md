@@ -29,7 +29,7 @@ The material under `docs/` is historical research. Do not let it override the ca
 - Do not add delivery, ordering, background location, calendar access, social features, RAG, agents, or public-launch scope.
 - Update the canonical documents in the same change whenever implementation changes a documented contract or decision.
 
-## Status (as of 2026-10-20)
+## Status (as of 2026-10-26)
 
 | Milestone | Status |
 |---|---|
@@ -37,6 +37,53 @@ The material under `docs/` is historical research. Do not let it override the ca
 | 2 — Deterministic suggestion API | **Complete** |
 | 3 — Expo vertical slice | **Partially complete** — local vertical slice implemented; tester-readiness work remains |
 | 4 — Notifications and private cohort readiness | Not started; not next (only the `device_tokens` and `notification_deliveries` tables exist) |
+
+## Where the last session left off (2026-10-26)
+
+Read this first in a new session, then confirm it against Git (`git status`, `git log --oneline -5`, `gh pr list`).
+
+**Git:**
+- `main` is at `8bf96ff`, with PRs #1–#5 merged:
+  - #3: Expo SDK 58
+  - #4: Supabase email sign-in
+  - #5: Expo SDK 58 patch versions
+- Milestone 3 step 3 (meal schedule, D020/D026, plus Been here already, D025) is on branch `meal-schedule` in its own PR to `main`. Check whether it is merged before starting step 4; if not, ask the user to merge it.
+- The repository has no branch protection. The user reviews and merges PRs on GitHub themselves, and `gh` is installed and logged in.
+
+**Next:** step 4, with the Google Places provider plus a fixture provider, and `policy_v1` with the price-ceiling filter.
+- Before writing code, settle the open decision of how a visit's cuisine label is captured without storing Google-derived data (D022).
+- Recommended default: the rating step asks "What kind of food was it?", pre-filled with a guess the user confirms, so the label is user-owned.
+- Ask the user; do not decide silently.
+
+**Outside accounts and keys:**
+
+| Item | Status |
+|---|---|
+| Supabase project `arrjixzbzumvxytlimpf` | Free plan. Email sign-in works end to end on a real iPhone. Custom SMTP is the user's Gmail (app password). The Magic Link and Confirm signup templates send `{{ .Token }}` codes. Upgrade to Pro and move to a domain sender before outside testers |
+| Google Cloud | Places API (New) and Maps SDK for iOS are enabled. Server key restricted to Places API (New); verified with one Nearby Search (IDs only) and refused by Geocoding. iOS key restricted to `com.winstontang.nosh` and Maps SDK for iOS. A $50 budget alert is set; the spend cap cannot cover Maps, so daily quotas (about 50 Nearby Search and 150 Place Details per day) are the hard stop |
+| Expo | `npx expo whoami` returns `winston0753` |
+| Apple Developer Program | Not started; approval takes 1–2 days. Needed for step 7 |
+| Fly.io | `flyctl` and `eas-cli` are installed; no Fly account yet (D030). Needed for step 7 |
+| Domain, privacy policy, app icon | Postponed until before outside testers |
+
+**Git-ignored local configuration (never commit or print key values):**
+- `apps/mobile/.env.local` holds:
+  - `EXPO_PUBLIC_API_URL`, currently the Mac's Wi-Fi address `http://192.168.1.73:8000` so the phone can reach it; update it if the network changes, and use `localhost` on the simulator;
+  - the Supabase URL and publishable key;
+  - `EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY`.
+- `services/api/.env` holds `AUTH_LOCAL_DEV=false`, `SUPABASE_URL`, `GOOGLE_PLACES_API_KEY`, and the database URL.
+
+**Running the app locally:**
+- Docker runs both databases.
+- The API runs from `services/api` with `uv run fastapi dev app/main.py --host 0.0.0.0`.
+- Expo runs from `apps/mobile` with `npx expo start -c`.
+- The user tests in Expo Go on a physical iPhone; Xcode is not installed, so the simulator is unavailable.
+- The dev database is migrated to 0005.
+
+**Working with this user:**
+- Explain in plain, non-technical language.
+- Commit, push, and open PRs only when asked.
+- Leave the untracked `.agents/`, `skills-lock.json`, `research_notes/`, and `reports/` files alone.
 
 The current checkpoint is **Milestone 0.1 — Working Local Foundation**, merged to `main` through PR #1: the local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. A correctness-hardening pass (onboarding provenance, honest visit confirmation, neutral priors, strict context validation, importer layout, atomic place-state writes) followed on branch `milestone-0.1-correctness-hardening`; see `notes.md` 2026-10-16. It is suitable for source control but not for TestFlight or external testers.
 

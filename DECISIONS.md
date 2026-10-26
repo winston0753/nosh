@@ -211,7 +211,7 @@ The production policy will initially learn more slowly than the toy simulator. R
 
 ## D012 — Defer the API hosting vendor
 
-- **Status:** Deferred
+- **Status:** Resolved by D030 (2026-10-26)
 - **Date:** 2026-10-12
 
 ### Decision
@@ -511,3 +511,34 @@ Target about $50/month: Supabase Pro (~$25; the free tier pauses idle projects),
 ### Consequences
 
 Google Cloud quotas and billing alerts must be set so usage cannot exceed the free caps unnoticed. A larger cohort requires revisiting this decision.
+
+## D029 — Bundle identifier `com.winstontang.nosh`
+
+- **Status:** Accepted (applied to `app.json` in Milestone 3 step 7)
+- **Date:** 2026-10-26
+
+### Decision
+
+The iOS bundle identifier is `com.winstontang.nosh`, using the developer's name as the namespace because no domain is owned. It replaces the placeholder `com.nosh.app`.
+
+### Consequences
+
+The identifier is permanent once the App Store Connect app record exists. The Google Maps SDK for iOS key is already restricted to it.
+
+## D030 — Host the API on Fly.io with Supabase Postgres
+
+- **Status:** Accepted (not yet deployed; Milestone 3 step 7)
+- **Date:** 2026-10-26
+
+### Decision
+
+Run the FastAPI container on a small Fly.io machine (about $2–5/month). The production database is the Supabase project's Postgres with the PostGIS extension enabled, so there is no second database bill. Connect through Supabase's direct or session connection, not the transaction pooler, which breaks asyncpg prepared statements. Run `alembic upgrade head` as a release step.
+
+### Alternatives rejected
+
+- **Render ($7/month starter):** simpler dashboard, slightly higher cost, no other advantage.
+- **Railway with its own Postgres:** a second database bill and extra PostGIS setup.
+
+### Consequences
+
+D012's container-first rule stands: no Fly-specific service becomes a core dependency. The Google server key can be IP-restricted once the Fly machine has a static egress address.

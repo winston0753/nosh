@@ -24,9 +24,11 @@ Read these before changing code:
 
 Root documents are canonical. Files under `docs/` are historical research.
 
-## Current state (as of 2026-10-20)
+## Current state (as of 2026-10-26)
 
-Checkpoint: **Milestone 0.1 — Working Local Foundation**, merged to `main` via PR #1, plus a correctness-hardening pass (branch `milestone-0.1-correctness-hardening`; see `notes.md` 2026-10-16). The local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. This is suitable for source control; it is **not** ready for TestFlight or external testers.
+Start with "Where the last session left off" in `IMPLEMENTATION_HANDOFF.md`. It covers open PRs, outside-account setup, local configuration, and the next decision to ask about.
+
+Checkpoint: **Milestone 0.1 — Working Local Foundation** (PR #1), the correctness-hardening pass (PR #2), Expo SDK 58 (PRs #3 and #5), and Supabase email sign-in (PR #4), all merged to `main`; the meal schedule (step 3) is in its own PR. The local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. This is suitable for source control; it is **not** ready for TestFlight or external testers.
 
 | Milestone | Status |
 |---|---|
@@ -55,7 +57,7 @@ Decisions D019–D028 (evidence: `docs/research/2026-10-20-place-data-and-map-te
 
 ## Next: complete Milestone 3
 
-The correctness-hardening pass and these decisions were merged to `main` via PR #2. Next, in order (see `IMPLEMENTATION_HANDOFF.md`):
+The bundle identifier (`com.winstontang.nosh`, D029) and API hosting (Fly.io with Supabase Postgres, D030) are decided. Next, in order (see `IMPLEMENTATION_HANDOFF.md`):
 
 1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21.
 2. ~~Supabase passwordless email authentication~~ — done 2026-10-21 (email one-time code; `AuthProvider` with per-user query keys and cache clearing; local-dev UUID mode kept when Supabase is not configured).

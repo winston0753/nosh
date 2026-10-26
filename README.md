@@ -257,7 +257,7 @@ git diff --check
 - **EAS/TestFlight build (Milestone 3):** not configured.
 - **App icons (Milestone 3):** `apps/mobile/assets/icon.png` and `notification-icon.png` are 1×1 placeholders.
 - **Notifications (Milestone 4, not started):** Expo push tokens, scheduler/worker, confirmation prompts.
-- **API hosting vendor:** deferred per D012.
+- **API hosting:** Fly.io with Supabase Postgres (D030); not yet deployed.
 
 ### Dependency audit (mobile, 2026-10-25, Expo SDK 58.0.19)
 
