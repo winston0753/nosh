@@ -420,6 +420,19 @@ State transitions are validated by the server. Duplicate requests return the alr
 - The mobile app is configured with only the Supabase project URL and the project's
   **publishable** key (the client-safe key that replaces the legacy `anon` key); it never
   holds a secret or service-role key. It obtains a user access token (Supabase JWT).
+- Mobile sign-in is a one-time email code (`signInWithOtp` then `verifyOtp` with type
+  `email`), which works when the email is opened on another device. The Supabase email
+  templates for sign-in and sign-up must include `{{ .Token }}`.
+- One `AuthProvider` (`apps/mobile/src/auth/`) owns the session for the whole app. The
+  session persists in the iOS Keychain through `expo-secure-store`, split into chunks
+  because a session can exceed SecureStore's 2 KB per-value limit. Tokens auto-refresh
+  only while the app is in the foreground, and every API request reads the current access
+  token.
+- Query keys are scoped by user ID, and in-flight queries are cancelled and the query
+  cache cleared whenever the signed-in user changes (sign-in, sign-out, account switch,
+  data deletion), so one account's data is never shown to another.
+- The mobile app runs in local-dev mode (UUID sign-in) when no Supabase URL and key are
+  configured; it must match the API's `AUTH_LOCAL_DEV` setting.
 - FastAPI validates: signature, expiry, issuer ({SUPABASE_URL}/auth/v1), audience
   (authenticated), role (authenticated), and UUID subject. SUPABASE_URL is required in
   production mode.

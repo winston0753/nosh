@@ -23,6 +23,7 @@ import {
   View,
 } from 'react-native';
 import type { NoshClient } from '../../src/api/client';
+import { userKey } from '../../src/auth/queryKeys';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useVisitConfirmation } from '../../src/hooks/useVisitConfirmation';
 
@@ -33,7 +34,7 @@ export default function ConfirmationScreen() {
     placeId: string;
     placeName: string;
   }>();
-  const { client } = useAuth();
+  const { client, userId } = useAuth();
   const displayName = placeName ?? 'this restaurant';
 
   // Without a proposal there is no idempotency identity for the visit, so a
@@ -65,6 +66,7 @@ export default function ConfirmationScreen() {
   return (
     <ConfirmationFlow
       client={client}
+      userId={userId ?? null}
       proposalId={proposalId}
       placeId={placeId}
       displayName={displayName}
@@ -74,11 +76,13 @@ export default function ConfirmationScreen() {
 
 function ConfirmationFlow({
   client,
+  userId,
   proposalId,
   placeId,
   displayName,
 }: {
   client: NoshClient;
+  userId: string | null;
   proposalId: string;
   placeId: string;
   displayName: string;
@@ -90,8 +94,8 @@ function ConfirmationFlow({
     placeId,
     proposalId,
     onSaved: () => {
-      qc.invalidateQueries({ queryKey: ['visits'] });
-      qc.invalidateQueries({ queryKey: ['progress'] });
+      qc.invalidateQueries({ queryKey: userKey(userId, 'visits') });
+      qc.invalidateQueries({ queryKey: userKey(userId, 'progress') });
     },
   });
 

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import React from 'react';
 import { FlatList, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { userKey } from '../../src/auth/queryKeys';
 import { useAuth } from '../../src/hooks/useAuth';
 import type { Visit } from '../../src/api/types';
 
@@ -20,10 +21,10 @@ function VisitRow({ visit }: { visit: Visit }) {
 }
 
 export default function HistoryScreen() {
-  const { client } = useAuth();
+  const { client, userId } = useAuth();
 
   const { data: visits, isLoading } = useQuery({
-    queryKey: ['visits'],
+    queryKey: userKey(userId, 'visits'),
     queryFn: () => client!.listVisits(50),
     enabled: !!client,
   });

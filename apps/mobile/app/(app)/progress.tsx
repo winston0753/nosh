@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import React from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { userKey } from '../../src/auth/queryKeys';
 import { useAuth } from '../../src/hooks/useAuth';
 import type { Progress } from '../../src/api/types';
 
@@ -27,10 +28,10 @@ function MonthRow({ progress }: { progress: Progress }) {
 }
 
 export default function ProgressScreen() {
-  const { client } = useAuth();
+  const { client, userId } = useAuth();
 
   const { data: progress, isLoading } = useQuery({
-    queryKey: ['progress'],
+    queryKey: userKey(userId, 'progress'),
     queryFn: () => client!.getProgress(),
     enabled: !!client,
   });

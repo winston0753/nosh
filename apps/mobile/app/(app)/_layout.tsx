@@ -3,13 +3,13 @@ import React, { useEffect } from 'react';
 import { useAuth } from '../../src/hooks/useAuth';
 
 export default function AppLayout() {
-  const { token, isLoading } = useAuth();
+  const { status } = useAuth();
 
   useEffect(() => {
-    if (!isLoading && !token) {
+    if (status === 'signed-out') {
       router.replace('/(auth)/sign-in');
     }
-  }, [token, isLoading]);
+  }, [status]);
 
   return (
     <Stack>

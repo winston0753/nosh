@@ -42,7 +42,7 @@ Checkpoint: **Milestone 0.1 — Working Local Foundation**, merged to `main` via
 - **Mobile:** Expo SDK 58 app in `apps/mobile/` with Expo Router `~58.0.24`, React Native 0.88, React 19.3, strict TypeScript, TanStack Query, and (currently) Apple Maps handoff (D019). Do not upgrade or downgrade Expo, React Native, or Expo Router without a recorded decision.
 - **Jobs:** batch jobs live in `services/api/jobs/` and import the app as `app`; run from `services/api` with `uv run --frozen python -m jobs.ingest_places.importer`.
 - **Contracts added by the hardening pass:** onboarding classification via `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state` (D018); strict context/meal-window validation with `422 validation_error` (D016); atomic `user_place_states` upserts; replay-equivalent responses; `(visited_at, id)` visit pagination.
-- **Tests:** 12 root spike tests, 148 API unit tests, 46 PostgreSQL integration tests (including 6 genuine concurrent-database tests), and 43 mobile Jest tests.
+- **Tests:** 12 root spike tests, 148 API unit tests, 46 PostgreSQL integration tests (including 6 genuine concurrent-database tests), and 58 mobile Jest tests.
 
 ## Direction change (2026-10-20)
 
@@ -58,7 +58,7 @@ Decisions D019–D028 (evidence: `docs/research/2026-10-20-place-data-and-map-te
 The correctness-hardening pass and these decisions were merged to `main` via PR #2. Next, in order (see `IMPLEMENTATION_HANDOFF.md`):
 
 1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21.
-2. Supabase passwordless email authentication, with per-user query keys and cache clearing on sign-out and deletion (the app still uses a local UUID adapter).
+2. ~~Supabase passwordless email authentication~~ — done 2026-10-21 (email one-time code; `AuthProvider` with per-user query keys and cache clearing; local-dev UUID mode kept when Supabase is not configured).
 3. Meal schedule, price ceiling, and fallback spots replace dining contexts (D020, D026); context creation currently hardcodes the SF Mission coordinate, 1,600 m, and every day.
 4. Place-provider abstraction (Google + test fixtures), `policy_v1`, and Been here already (D021, D022, D024, D025).
 5. Mobile current-location flow with a Google map and Google Maps handoff.

@@ -17,7 +17,7 @@ All local verification gates pass (2026-10-16, after the correctness-hardening p
 - 12 root spike tests
 - 148 API unit tests (lint, format, strict mypy clean)
 - 46 integration tests (PostGIS + real migrations + 6 concurrent DB tests) — **all pass**
-- 43 mobile Jest tests (TypeScript, ESLint, Expo Doctor 18/18 clean)
+- 58 mobile Jest tests (TypeScript, ESLint, Expo Doctor 20/20 clean)
 
 Stack: FastAPI + SQLAlchemy 2 async API; Expo SDK 58 mobile app (React Native 0.88, Expo Router `~58.0.24`).
 
@@ -124,12 +124,19 @@ curl -H "Authorization: Bearer 00000000-0000-0000-0000-000000000001" \
 ```bash
 cd apps/mobile
 npm ci
-echo "EXPO_PUBLIC_API_URL=http://localhost:8000" > .env.local
+cp .env.example .env.local   # then fill in values (git-ignored)
 npx expo start
 # Press 'i' for iOS simulator
 ```
 
-Sign in with any UUID string (local dev adapter).
+The app has two sign-in modes, and the API must match:
+
+| Mobile `.env.local` | API `services/api/.env` | Sign-in |
+|---|---|---|
+| `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` set | `AUTH_LOCAL_DEV=false`, `SUPABASE_URL` set to the same project, `SUPABASE_JWT_SECRET` empty | Email a one-time code, then enter it |
+| Both Supabase values empty | `AUTH_LOCAL_DEV=true` | Enter any UUID (local dev adapter) |
+
+Use the project API URL (`https://<project-ref>.supabase.co`), not the dashboard URL. For email codes, the Supabase **Magic Link** and **Confirm signup** email templates (Authentication → Emails) must include `{{ .Token }}`. Supabase only allows editing these templates once custom SMTP is configured (Authentication → Emails → SMTP Settings); a Gmail app password on `smtp.gmail.com:465` works for development, and a domain sender is needed before inviting testers.
 
 ---
 
@@ -212,7 +219,7 @@ cd apps/mobile
 npm ci
 npm run typecheck       # TypeScript strict
 npm run lint            # ESLint
-npm test -- --runInBand # Jest unit tests (43 tests)
+npm test -- --runInBand # Jest unit tests (58 tests)
 npx expo install --check
 npx expo-doctor
 ```
@@ -236,14 +243,13 @@ git diff --check
 | Go / Another / Not today state machine | Implemented with idempotency |
 | Visit confirmation + rating + history + progress | Implemented |
 | Strict mypy | 0 errors |
-| Mobile app (Expo SDK 58, Expo Router `~58.0.24`) | All MVP screens; TypeScript + ESLint + 43 Jest tests + Expo Doctor (20/20) pass |
+| Mobile app (Expo SDK 58, Expo Router `~58.0.24`) | All MVP screens; Supabase email-code sign-in; TypeScript + ESLint + 58 Jest tests + Expo Doctor (20/20) pass |
 | Integration tests | 46 tests covering full flow, provenance, validation, replay, pagination, and concurrency; requires PostgreSQL |
 | Place importer | `uv run --frozen python -m jobs.ingest_places.importer` from `services/api` |
 
 ## What is not yet complete
 
 - **End-to-end local flow without Docker:** requires PostgreSQL running.
-- **Mobile authentication (Milestone 3):** the app uses a local UUID adapter only; Supabase passwordless email sign-in is not implemented. The app will need only the Supabase project URL and publishable key; the API needs `SUPABASE_URL` and verifies tokens against the project JWKS (no shared JWT secret for new projects).
 - **Meal schedule and location (Milestone 3):** context creation hardcodes the SF Mission coordinate, a 1,600 m radius, and every active day; D020 replaces dining contexts with a meal schedule and current location.
 - **Place data (Milestone 3):** suggestions use 20 fictional fixture places; D021 moves to live Google Places data.
 - **Offline resilience (Milestone 3):** session identifiers are not persisted, and idempotent response writes are not queued during transient network failures.
@@ -322,7 +328,7 @@ db/                   Docker init SQL (PostGIS; pgvector deferred per D013)
 **Complete Milestone 3 — Expo vertical slice (tester readiness)**, following the 2026-10-20 decisions (evidence in `docs/research/2026-10-20-place-data-and-map-terms.md`):
 
 1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21; App Store Connect requires Xcode 26 builds.
-2. Supabase passwordless email authentication in the mobile app (replacing the local UUID adapter), configured with the project URL and publishable key; the API validates tokens via `SUPABASE_URL` + JWKS.
+2. ~~Supabase passwordless email authentication~~ — done 2026-10-21 (email one-time code, one session provider, per-user query cache).
 3. Meal schedule (weekday lunch default, dinner opt-in), per-meal price ceiling, and optional Home/Work fallback spots replace dining contexts (D020, D026).
 4. Live Google Places candidates behind a place-provider abstraction (fixtures in tests), `policy_v1` ranking, and Been here already (D021, D022, D024, D025).
 5. Foreground current location at open time, a Google map on the card, and Google Maps handoff. No background location.

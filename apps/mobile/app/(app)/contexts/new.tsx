@@ -19,12 +19,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { userKey } from '../../../src/auth/queryKeys';
 import { useAuth } from '../../../src/hooks/useAuth';
 
 const SF_MISSION = { latitude: 37.759, longitude: -122.419 };
 
 export default function NewContextScreen() {
-  const { client } = useAuth();
+  const { client, userId } = useAuth();
   const qc = useQueryClient();
 
   const [name, setName] = useState('Home Dinner');
@@ -48,7 +49,7 @@ export default function NewContextScreen() {
         notifications_enabled: notificationsEnabled,
       }),
     onSuccess: (ctx) => {
-      qc.invalidateQueries({ queryKey: ['contexts'] });
+      qc.invalidateQueries({ queryKey: userKey(userId, 'contexts') });
       router.replace({ pathname: '/(app)/onboarding', params: { contextId: ctx.id } });
     },
     onError: () => Alert.alert('Could not create context', 'Check your connection.'),
