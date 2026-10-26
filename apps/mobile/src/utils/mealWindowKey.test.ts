@@ -3,13 +3,13 @@
  * Run: npm test -- --runInBand
  *
  * Covers:
- *  - date derivation using context time zone, not device time zone
+ *  - date derivation using the schedule's time zone, not the device time zone
  *  - both sides of the midnight UTC boundary
  *  - DST spring-forward and fall-back
  *  - minute precision inside the window
  *  - active_days gating (0=Mon…6=Sun API convention)
  *  - exact window open/close times
- *  - brunch meal type
+ *  - openMealWindow picks the enabled meal that is open now
  *  - invalid IANA time zone returns null
  *  - overnight window (end <= start) returns null
  *  - mealWindowKey returns null outside active window
@@ -21,18 +21,16 @@ import {
   localTimeInZone,
   localWeekdayInZone,
   mealWindowKey,
+  openMealWindow,
   parseWindowMinutes,
+  type MealWindow,
 } from './mealWindowKey';
-import type { Context } from '../api/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function ctx(overrides: Partial<Context> = {}): Pick<
-  Context,
-  'meal_type' | 'local_window_start' | 'local_window_end' | 'time_zone' | 'active_days'
-> {
+function ctx(overrides: Partial<MealWindow> = {}): MealWindow {
   return {
     meal_type: 'dinner',
     local_window_start: '18:00',
@@ -204,16 +202,16 @@ describe('activeMealType', () => {
     expect(activeMealType(sundayCtx, nowSun)).toBe('dinner');
   });
 
-  // Brunch
-  test('brunch window, correct time', () => {
-    const brunch = ctx({
-      meal_type: 'brunch',
-      local_window_start: '10:00',
-      local_window_end: '13:00',
+  // Lunch
+  test('lunch window, correct time', () => {
+    const lunch = ctx({
+      meal_type: 'lunch',
+      local_window_start: '11:30',
+      local_window_end: '13:30',
     });
-    // 2026-10-12T17:00Z = 10:00 PDT Monday
-    const now = new Date('2026-10-12T17:00:00.000Z');
-    expect(activeMealType(brunch, now)).toBe('brunch');
+    // 2026-10-12T19:00Z = 12:00 PDT Monday
+    const now = new Date('2026-10-12T19:00:00.000Z');
+    expect(activeMealType(lunch, now)).toBe('lunch');
   });
 
   // Invalid time zone
@@ -286,14 +284,49 @@ describe('mealWindowKey', () => {
     expect(mealWindowKey(ctx({ active_days: [1] }), now)).toBeNull();
   });
 
-  test('brunch key format', () => {
-    const brunch = ctx({
-      meal_type: 'brunch',
-      local_window_start: '10:00',
+  test('lunch key format', () => {
+    const lunch = ctx({
+      meal_type: 'lunch',
+      local_window_start: '11:00',
       local_window_end: '13:00',
       time_zone: 'UTC',
     });
     const now = new Date('2026-10-12T11:00:00.000Z'); // 11:00 UTC Monday
-    expect(mealWindowKey(brunch, now)).toBe('2026-10-12#brunch');
+    expect(mealWindowKey(lunch, now)).toBe('2026-10-12#lunch');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// openMealWindow
+// ---------------------------------------------------------------------------
+
+describe('openMealWindow', () => {
+  const lunch = {
+    ...ctx({ meal_type: 'lunch', local_window_start: '11:30', local_window_end: '13:30' }),
+    enabled: true,
+  };
+  const dinner = { ...ctx(), enabled: true };
+
+  test('picks the meal that is open now', () => {
+    // 2026-10-12T19:00Z = 12:00 PDT Monday
+    expect(openMealWindow([lunch, dinner], new Date('2026-10-12T19:00:00.000Z'))).toEqual({
+      meal: lunch,
+      key: '2026-10-12#lunch',
+    });
+    // 2026-10-13T02:00Z = 19:00 PDT Monday
+    expect(openMealWindow([lunch, dinner], new Date('2026-10-13T02:00:00.000Z'))?.key).toBe(
+      '2026-10-12#dinner',
+    );
+  });
+
+  test('ignores disabled meals', () => {
+    const now = new Date('2026-10-13T02:00:00.000Z');
+    expect(openMealWindow([lunch, { ...dinner, enabled: false }], now)).toBeNull();
+  });
+
+  test('returns null between meals and with no meals', () => {
+    const between = new Date('2026-10-12T23:00:00.000Z'); // 16:00 PDT
+    expect(openMealWindow([lunch, dinner], between)).toBeNull();
+    expect(openMealWindow([], between)).toBeNull();
   });
 });

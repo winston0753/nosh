@@ -130,10 +130,10 @@ test('the API client sends the current access token after a refresh', async () =
   const fake = fakeSupabase(sessionFor('user-a', 'first'));
   await mount(fake.client);
   const client = latest.client!;
-  await client.listContexts();
+  await client.getMealSchedule();
   // Refresh: same user, new token. The existing client must pick it up.
   await act(async () => fake.setSession(sessionFor('user-a', 'second')));
-  await client.listContexts();
+  await client.getMealSchedule();
   const auths = (globalThis.fetch as jest.Mock).mock.calls.map(
     ([, init]) => (init as RequestInit & { headers: Record<string, string> }).headers.Authorization,
   );
@@ -207,7 +207,7 @@ test('local-dev mode stores the UUID token and signs out cleanly', async () => {
   expect(latest.userId).toBe(id);
   expect(mockStore.get('nosh_dev_token')).toBe(id);
 
-  await latest.client!.listContexts();
+  await latest.client!.getMealSchedule();
   const init = (globalThis.fetch as jest.Mock).mock.calls[0][1] as RequestInit & {
     headers: Record<string, string>;
   };
@@ -220,7 +220,7 @@ test('local-dev mode stores the UUID token and signs out cleanly', async () => {
 
 test('the API client refuses to send a request without a token', async () => {
   const client = new NoshClient(async () => null);
-  await expect(client.listContexts()).rejects.toMatchObject({
+  await expect(client.getMealSchedule()).rejects.toMatchObject({
     code: 'unauthenticated',
     status: 401,
   });

@@ -36,9 +36,10 @@ async def delete_account(db: AsyncSession, user_id: uuid.UUID) -> None:
          clearer and avoids relying on the SET NULL timing).
       2. notification_deliveries — references suggestion_sessions (ON DELETE
          SET NULL), but references user_id directly; delete explicitly.
-      3. dining_contexts — cascades:
-           dining_contexts → suggestion_sessions → proposals → proposal_responses
-         Precise coordinates in dining_contexts.location are erased here.
+      3. suggestion_sessions — cascades:
+           suggestion_sessions → proposals → proposal_responses
+      3b. meal_schedules and saved_anchors.  Precise Home/Work coordinates in
+          saved_anchors.location are erased here.
       4. user_place_states — no cascades.
       5. device_tokens — no cascades.
       6. profiles — must be last (FK target for Supabase Auth; or simply last
@@ -49,9 +50,10 @@ async def delete_account(db: AsyncSession, user_id: uuid.UUID) -> None:
     the service-role key.  This is not yet implemented; add it here when
     SUPABASE_SERVICE_ROLE_KEY is available.
     """
-    from app.contexts.models import DiningContext
     from app.notifications.models import DeviceToken, NotificationDelivery
     from app.places.models import UserPlaceState
+    from app.schedules.models import MealSchedule, SavedAnchor
+    from app.suggestions.models import SuggestionSession
     from app.visits.models import Visit
 
     # 1. Visits first (references proposals, which will cascade-delete later).
@@ -60,8 +62,10 @@ async def delete_account(db: AsyncSession, user_id: uuid.UUID) -> None:
     # 2. Notification deliveries (not covered by any cascade).
     await db.execute(delete(NotificationDelivery).where(NotificationDelivery.user_id == user_id))
 
-    # 3. Contexts (cascades → sessions → proposals → responses).
-    await db.execute(delete(DiningContext).where(DiningContext.user_id == user_id))
+    # 3. Sessions (cascades → proposals → responses), then schedule and anchors.
+    await db.execute(delete(SuggestionSession).where(SuggestionSession.user_id == user_id))
+    await db.execute(delete(MealSchedule).where(MealSchedule.user_id == user_id))
+    await db.execute(delete(SavedAnchor).where(SavedAnchor.user_id == user_id))
 
     # 4. Place states.
     await db.execute(delete(UserPlaceState).where(UserPlaceState.user_id == user_id))

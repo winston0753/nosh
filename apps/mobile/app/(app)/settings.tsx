@@ -31,7 +31,8 @@ export default function SettingsScreen() {
   const handleDeleteData = () => {
     Alert.alert(
       'Delete Nosh data',
-      'This removes your dining contexts, place history, and visit records from Nosh. ' +
+      'This removes your meal schedule, saved spots, place history, and visit records ' +
+        'from Nosh. ' +
         'Your account sign-in is not affected. This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -55,16 +56,16 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.sectionTitle}>Contexts</Text>
-        <TouchableOpacity style={styles.row} onPress={() => router.push('/(app)/contexts/new')}>
-          <Text style={styles.rowText}>Add a new context</Text>
+        <Text style={styles.sectionTitle}>Meals</Text>
+        <TouchableOpacity style={styles.row} onPress={() => router.push('/(app)/schedule')}>
+          <Text style={styles.rowText}>Meal times and budget</Text>
         </TouchableOpacity>
 
         <Text style={styles.sectionTitle}>Account</Text>
         <View style={styles.row}>
           <Text style={styles.note}>
-            Nosh stores your dining contexts, place history, and visit confirmations. No precise
-            coordinates appear in logs.
+            Nosh stores your meal schedule, place history, and visit confirmations. Your current
+            location is used only to find nearby places and is never stored or logged.
           </Text>
         </View>
 

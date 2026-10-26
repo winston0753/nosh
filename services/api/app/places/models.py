@@ -101,9 +101,10 @@ class UserPlaceState(Base):
     state: Mapped[str] = mapped_column(String(50), nullable=False)  # unknown/visited/not_interested
     source: Mapped[str] = mapped_column(
         String(50), nullable=False
-    )  # onboarding/confirmation/manual/import
-    # Set to True when source='onboarding' first records this place as visited.
-    # Never reset to False: a later Nosh confirmation must not erase provenance.
+    )  # onboarding/been_here/confirmation/manual/import
+    # Set to True when the user reports a visit from before Nosh (onboarding,
+    # or Been here already on a suggestion).  Never reset to False: a later
+    # Nosh confirmation must not erase provenance.
     was_visited_before_nosh: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

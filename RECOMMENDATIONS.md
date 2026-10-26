@@ -27,7 +27,7 @@ It must not optimize raw novelty, completion percentage, clicks, or Maps handoff
 ## 3. Terminology
 
 - **Context:** A user-defined location, radius, meal type, schedule, and time zone.
-- **Session:** One decision opportunity for a context and meal window.
+- **Session:** One decision opportunity for a user and meal window (D020).
 - **Candidate:** An eligible unvisited restaurant considered in a session.
 - **Proposal:** The one restaurant shown at a specific sequence number.
 - **Response:** Go, Another, or Not today.
@@ -39,7 +39,7 @@ It must not optimize raw novelty, completion percentage, clicks, or Maps handoff
 A place is eligible only when all applicable rules pass:
 
 1. The place is active.
-2. Its location is within the context radius.
+2. Its location is within walking range (1,600 m in `policy_v0`) of the session's anchor: the device location, or a saved Home/Work spot.
 3. It is not confirmed visited.
 4. It is not marked Not interested.
 5. It has not already been proposed in the current session.
@@ -81,9 +81,9 @@ beta_c  = 1 + history_prior_strength × (1 - normalized_history_frequency(c))
 history_prior_strength = 4
 ```
 
-If no onboarding history exists, use `Beta(1, 1)` for every cuisine. When history exists, a cuisine absent from it has `normalized_history_frequency = 0`, giving `Beta(1, 5)`.
+If no pre-Nosh history exists, use `Beta(1, 1)` for every cuisine. When history exists, a cuisine absent from it has `normalized_history_frequency = 0`, giving `Beta(1, 5)`.
 
-**Provenance.** Onboarding history is only the primary cuisines of places the user marked Been during onboarding (`was_visited_before_nosh = TRUE`). A place that became visited through a Nosh confirmation, a manual settings edit, or an import is not history. Confirmed outcomes (§7) come only from proposal-backed visits; manual visits do not update cuisine preference (D015). A post-Nosh visit is therefore never counted both as history and as an outcome.
+**Provenance.** Pre-Nosh history is only the primary cuisines of places the user marked Been here already on a suggestion (D025), or Been during the former onboarding step (`was_visited_before_nosh = TRUE`). A place that became visited through a Nosh confirmation, a manual settings edit, or an import is not history. Confirmed outcomes (§7) come only from proposal-backed visits; manual visits do not update cuisine preference (D015). A post-Nosh visit is therefore never counted both as history and as an outcome.
 
 The simulator supports this mechanism as preferable to lowest been-to percentage under its assumptions. The prior strength is still a hypothesis and must be versioned.
 
@@ -102,7 +102,7 @@ place_score =
 All components are normalized to `[0, 1]`.
 
 - `quality_score`: curated score or Bayesian-adjusted source rating when licensed and available; use a neutral default when missing.
-- `distance_score`: monotonic distance decay within the context radius.
+- `distance_score`: monotonic distance decay within the walking radius.
 - `context_fit`: supported match for meal type or explicit user constraint; otherwise neutral.
 - `exploration_score`: deterministic tie-break preference for underexposed eligible places.
 
@@ -153,13 +153,13 @@ These values are hypotheses. Any change creates a new policy version.
 
 ## 8. Cold start
 
-### New user with onboarding history
+### User with pre-Nosh history
 
-- Use the cuisine frequency of places marked Been during onboarding as a weak taste prior.
+- Use the cuisine frequency of places marked Been here already as a weak taste prior.
 - Exclude places marked Been or Not interested.
 - Preserve exploration across cuisines with unvisited supply.
 
-### New user without onboarding history
+### New user without pre-Nosh history
 
 - Use uniform `Beta(1, 1)` cuisine priors.
 - Prefer cuisines with multiple eligible places rather than tiny categories.
@@ -177,14 +177,14 @@ These values are hypotheses. Any change creates a new policy version.
 - Avoid proposing the same place in consecutive meal windows unless the user explicitly saved it for later.
 - Track recent cuisine exposure and use it only as a bounded tie-breaker.
 - Do not enforce diversity by suggesting a cuisine with poor acceptance evidence.
-- Keep lunch and dinner contexts separate because location and intent differ.
+- Keep lunch and dinner sessions separate because location and intent differ.
 
 ## 10. Logged decision record
 
 Every proposal stores:
 
 - policy version;
-- dining-context version;
+- meal-schedule version and anchor source (device, home, or work; never the coordinate);
 - candidate place IDs;
 - exclusion counts by reason;
 - chosen cuisine and sampled acceptance value;

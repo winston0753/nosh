@@ -6,32 +6,40 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.contexts.models import DiningContext
-from app.contexts.service import get_context_for_user
-from app.contexts.validation import check_meal_window_key
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
     InvalidStateError,
+    NoshError,
     NotFoundError,
     ValidationFailedError,
 )
 from app.places.models import Cuisine, Place, PlaceCuisine
-from app.places.service import build_candidates
-from app.recommendations.engine import recommend
+from app.places.service import build_candidates, upsert_user_place_state
+from app.recommendations.engine import POLICY_VERSION, recommend
 from app.recommendations.priors import build_cuisine_stats
-from app.recommendations.types import CuisineStats, NoCandidatesResult, RecommendationResult
+from app.recommendations.types import CuisineStats, RecommendationResult
+from app.schedules.service import get_anchor_point, lock_meal_plan
+from app.schedules.validation import check_meal_window_key, parse_meal_window_key
 from app.suggestions.models import Proposal, ProposalResponse, SuggestionSession
 from app.suggestions.schemas import ProposalResponse_Schema
 
 # Unique constraints on proposal_responses (migrations 0001 and 0003).
 _CLIENT_EVENT_ID_CONSTRAINT = "proposal_responses_client_event_id_key"
 _PROPOSAL_RESPONSE_CONSTRAINT = "uq_proposal_responses_proposal_id"
+
+# Candidates must be within walking range of the anchor.  policy_v1 (D024)
+# replaces this fixed radius with walking time.
+WALKING_RADIUS_METERS = 1600.0
+
+# Responses that close the session, and those that advance to the next candidate.
+_CLOSING = {"go": "accepted", "not_today": "skipped"}
+_ADVANCING = ("another", "been_here")
 
 
 @dataclass(frozen=True)
@@ -50,95 +58,120 @@ class RecordedResponse:
 async def get_or_create_session(
     db: AsyncSession,
     user_id: uuid.UUID,
-    dining_context_id: uuid.UUID,
     meal_window_key: str,
+    *,
+    location: tuple[float, float] | None = None,
+    anchor: str | None = None,
 ) -> SuggestionSession:
-    """Idempotent: returns existing session or creates one.
+    """Idempotent: returns the user's session for the window, or creates it.
 
-    Concurrent-safe: locks the DiningContext row with SELECT FOR UPDATE before
-    creating a new session.  This serialises simultaneous creation requests for
-    the same (context, window) pair so exactly one session is ever inserted.
+    ``location`` is the device's (longitude, latitude); ``anchor`` names a
+    saved Home/Work spot.  Exactly one is given (enforced by the schema).  The
+    coordinate is used once to rank candidates and is never stored or logged.
 
-    The meal-window key must agree with the context: a real calendar date on
-    one of its active days, its meal type, and a valid schedule (422
-    ``validation_error`` otherwise).
+    Concurrent-safe: locks the user's meal_schedules row for the meal before
+    creating, so simultaneous requests for one window insert exactly one
+    session; the (user_id, meal_window_key) unique constraint backs this up.
 
-    If no eligible candidates exist at creation time, sets state=no_candidates.
+    The key must name an enabled meal of the user's schedule, on one of its
+    active days, with a valid stored schedule (422 ``validation_error``).  An
+    unset anchor is 422 ``anchor_not_set``.  With no eligible candidates the
+    session is created closed with state ``no_candidates``.
     """
-    ctx = await get_context_for_user(db, dining_context_id, user_id)
+    try:
+        _, meal_type = parse_meal_window_key(meal_window_key)
+    except ValueError as exc:
+        raise ValidationFailedError(str(exc), field="meal_window_key") from exc
+
+    # Fast path: read without a lock first.
+    session = await _find_session(db, user_id, meal_window_key)
+    if session is not None:
+        return session
+
+    plan = await lock_meal_plan(db, user_id, meal_type)
+    if plan is None or not plan.enabled:
+        raise ValidationFailedError(
+            f"{meal_type} is not enabled in your meal schedule", field="meal_window_key"
+        )
     try:
         check_meal_window_key(
             meal_window_key,
-            meal_type=ctx.meal_type,
-            active_days=ctx.active_days,
-            time_zone=ctx.time_zone,
-            local_window_start=ctx.local_window_start,
-            local_window_end=ctx.local_window_end,
+            meal_type=plan.meal_type,
+            active_days=plan.active_days,
+            time_zone=plan.time_zone,
+            local_window_start=plan.local_window_start,
+            local_window_end=plan.local_window_end,
         )
     except ValueError as exc:
         raise ValidationFailedError(str(exc), field="meal_window_key") from exc
 
-    # Fast-path: read without a lock first.
-    result = await db.execute(
-        select(SuggestionSession)
-        .where(
-            SuggestionSession.dining_context_id == dining_context_id,
-            SuggestionSession.meal_window_key == meal_window_key,
-        )
-        .options(selectinload(SuggestionSession.proposals).selectinload(Proposal.response))
-    )
-    session = result.scalar_one_or_none()
+    # Re-check under the lock: a concurrent request may have created it.
+    session = await _find_session(db, user_id, meal_window_key)
     if session is not None:
-        if session.user_id != user_id:
-            raise ForbiddenError()
         return session
 
-    # Acquire a row-level lock on the context to serialise concurrent creation.
-    await db.execute(
-        select(DiningContext).where(DiningContext.id == dining_context_id).with_for_update()
-    )
-
-    # Re-check after acquiring the lock — a concurrent request may have created
-    # the session between the unlocked read and the lock.
-    result = await db.execute(
-        select(SuggestionSession)
-        .where(
-            SuggestionSession.dining_context_id == dining_context_id,
-            SuggestionSession.meal_window_key == meal_window_key,
+    point: tuple[float, float] | None
+    if location is not None:
+        point, anchor_source = location, "device"
+    else:
+        assert anchor is not None
+        point, anchor_source = await get_anchor_point(db, user_id, anchor), anchor
+    if point is None:
+        raise NoshError(
+            code="anchor_not_set",
+            message=f"No {anchor} spot is saved",
+            status_code=422,
+            field="anchor",
         )
-        .options(selectinload(SuggestionSession.proposals).selectinload(Proposal.response))
-    )
-    session = result.scalar_one_or_none()
-    if session is not None:
-        if session.user_id != user_id:
-            raise ForbiddenError()
-        return session
 
-    # Create session; state starts active and may immediately become no_candidates.
     session = SuggestionSession(
         user_id=user_id,
-        dining_context_id=dining_context_id,
-        context_version=ctx.version,
         meal_window_key=meal_window_key,
+        schedule_version=plan.version,
+        anchor_source=anchor_source,
         state="active",
-        policy_version="policy_v0",
+        policy_version=POLICY_VERSION,
+        candidate_queue=[],
     )
     db.add(session)
     await db.flush()
 
-    first = await _generate_next_proposal(db, session, ctx, user_id, already_proposed=set())
-    if first is None:
+    session.candidate_queue = await _rank_candidates(db, session, user_id, point, meal_type)
+    if await _advance(db, session) is None:
         session.state = "no_candidates"
         session.closed_at = datetime.now(UTC)
 
+    # Only the open meal window needs its queue; drop the user's older ones so
+    # distances to unshown candidates are not retained.
+    await db.execute(
+        update(SuggestionSession)
+        .where(
+            SuggestionSession.user_id == user_id,
+            SuggestionSession.id != session.id,
+            SuggestionSession.candidate_queue != [],
+        )
+        .values(candidate_queue=[])
+    )
+
     await db.commit()
-    await db.refresh(session)
+    found = await _find_session(db, user_id, meal_window_key)
+    assert found is not None
+    return found
+
+
+async def _find_session(
+    db: AsyncSession, user_id: uuid.UUID, meal_window_key: str
+) -> SuggestionSession | None:
     result = await db.execute(
         select(SuggestionSession)
-        .where(SuggestionSession.id == session.id)
+        .where(
+            SuggestionSession.user_id == user_id,
+            SuggestionSession.meal_window_key == meal_window_key,
+        )
         .options(selectinload(SuggestionSession.proposals).selectinload(Proposal.response))
+        .execution_options(populate_existing=True)
     )
-    return result.scalar_one()
+    return result.scalar_one_or_none()
 
 
 async def get_session(
@@ -164,7 +197,7 @@ async def record_response(
     response: str,
     client_event_id: str,
 ) -> RecordedResponse:
-    """Record a Go/Another/Not today response.
+    """Record a Go/Another/Not today/Been here already response.
 
     Idempotency and concurrency contract
     -------------------------------------
@@ -275,21 +308,21 @@ async def record_response(
 
     next_proposal: ProposalResponse_Schema | None = None
 
-    if response == "not_today":
-        session.state = "skipped"
+    if response in _CLOSING:
+        session.state = _CLOSING[response]
         session.closed_at = datetime.now(UTC)
+        session.candidate_queue = []
 
-    elif response == "go":
-        session.state = "accepted"
-        session.closed_at = datetime.now(UTC)
-
-    elif response == "another":
-        # The session row lock taken above also serialises concurrent Another
-        # requests, so the proposal set read here cannot change underneath us.
-        await db.refresh(session, attribute_names=["proposals"])
-        ctx = await get_context_for_user(db, session.dining_context_id, user_id)
-        already_proposed = {p.place_id for p in session.proposals}
-        np = await _generate_next_proposal(db, session, ctx, user_id, already_proposed)
+    elif response in _ADVANCING:
+        if response == "been_here":
+            # D025: visited before Nosh.  Excluded from now on, feeds the
+            # history prior, and never counts toward the North Star (D018).
+            await upsert_user_place_state(
+                db, user_id, proposal.place_id, "visited", "been_here", visited_before_nosh=True
+            )
+        # The session row lock taken above serialises concurrent responses,
+        # so the queue read here cannot change underneath us.
+        np = await _advance(db, session)
         if np is not None:
             next_proposal = await _proposal_to_schema(db, np)
         else:
@@ -301,68 +334,80 @@ async def record_response(
     return RecordedResponse(response=resp, session_state=session.state, next_proposal=next_proposal)
 
 
-async def _generate_next_proposal(
+async def _rank_candidates(
     db: AsyncSession,
     session: SuggestionSession,
-    ctx: DiningContext,
     user_id: uuid.UUID,
-    already_proposed: set[uuid.UUID],
-) -> Proposal | None:
-    coord_result = await db.execute(
-        select(
-            func.ST_X(func.ST_GeomFromWKB(func.ST_AsBinary(DiningContext.location))).label("lon"),
-            func.ST_Y(func.ST_GeomFromWKB(func.ST_AsBinary(DiningContext.location))).label("lat"),
-        ).where(DiningContext.id == ctx.id)
-    )
-    coord_row = coord_result.one()
-    lon, lat = float(coord_row.lon), float(coord_row.lat)
+    point: tuple[float, float],
+    meal_type: str,
+) -> list[dict[str, object]]:
+    """Rank every eligible candidate around ``point`` once, in proposal order.
 
-    candidates = await build_candidates(
-        db,
-        user_id,
-        lon,
-        lat,
-        float(ctx.radius_meters),
-        already_proposed,
-    )
+    Entry *n* is exactly what policy_v0 would propose as sequence number *n*
+    after the first *n - 1* entries were declined, so the order is the same as
+    generating proposals one Another at a time.
+    """
+    lon, lat = point
+    candidates = await build_candidates(db, user_id, lon, lat, WALKING_RADIUS_METERS, set())
     stats_by_cuisine = await _load_cuisine_stats(db, user_id)
-    sequence_number = len(already_proposed) + 1
 
-    outcome = recommend(
-        session_id=session.id,
-        candidates=candidates,
-        stats_by_cuisine=stats_by_cuisine,
-        already_proposed=already_proposed,
-        radius_meters=float(ctx.radius_meters),
-        sequence_number=sequence_number,
-        meal_type=ctx.meal_type,
-    )
+    queue: list[dict[str, object]] = []
+    proposed: set[uuid.UUID] = set()
+    while True:
+        outcome = recommend(
+            session_id=session.id,
+            candidates=candidates,
+            stats_by_cuisine=stats_by_cuisine,
+            already_proposed=proposed,
+            radius_meters=WALKING_RADIUS_METERS,
+            sequence_number=len(queue) + 1,
+            meal_type=meal_type,
+        )
+        if not isinstance(outcome, RecommendationResult):
+            return queue
+        scored = outcome.proposal
+        proposed.add(scored.candidate.place_id)
+        queue.append(
+            {
+                "place_id": str(scored.candidate.place_id),
+                "cuisine_id": str(scored.candidate.cuisine_id),
+                "total_score": scored.total_score,
+                "score_components": scored.score_components,
+                "reason_codes": scored.reason_codes,
+                "snapshot": {
+                    "candidate_count": outcome.candidate_count,
+                    "chosen_cuisine_slug": outcome.chosen_cuisine_slug,
+                    "cuisine_sample_used": outcome.cuisine_sample,
+                    "unvisited_pool_size": outcome.unvisited_pool_size,
+                    "exclusion_counts": outcome.exclusion_counts,
+                    "session_seed": outcome.session_seed,
+                    "distance_meters": scored.candidate.distance_meters,
+                },
+            }
+        )
 
-    if isinstance(outcome, NoCandidatesResult):
+
+async def _advance(db: AsyncSession, session: SuggestionSession) -> Proposal | None:
+    """Turn the next queued candidate into a proposal, or return None if empty."""
+    queue = list(session.candidate_queue)
+    if not queue:
         return None
+    entry = queue[0]
+    # Reassign rather than mutate so SQLAlchemy sees the JSONB change.
+    session.candidate_queue = queue[1:]
 
-    assert isinstance(outcome, RecommendationResult)
-    scored = outcome.proposal
-
-    candidate_snapshot: dict[str, object] = {
-        "candidate_count": outcome.candidate_count,
-        "chosen_cuisine_slug": outcome.chosen_cuisine_slug,
-        "cuisine_sample_used": outcome.cuisine_sample,
-        "unvisited_pool_size": outcome.unvisited_pool_size,
-        "exclusion_counts": outcome.exclusion_counts,
-        "session_seed": outcome.session_seed,
-        "distance_meters": scored.candidate.distance_meters,
-    }
-
+    count = await db.execute(
+        select(Proposal.id).where(Proposal.suggestion_session_id == session.id)
+    )
     proposal = Proposal(
         suggestion_session_id=session.id,
-        place_id=scored.candidate.place_id,
-        cuisine_id=scored.candidate.cuisine_id,
-        sequence_number=sequence_number,
-        total_score=scored.total_score,
-        score_components=scored.score_components,
-        reason_codes=scored.reason_codes,
-        candidate_snapshot=candidate_snapshot,
+        place_id=uuid.UUID(str(entry["place_id"])),
+        cuisine_id=uuid.UUID(str(entry["cuisine_id"])),
+        sequence_number=len(count.all()) + 1,
+        total_score=entry["total_score"],
+        score_components=entry["score_components"],
+        reason_codes=entry["reason_codes"],
+        candidate_snapshot=entry["snapshot"],
     )
     db.add(proposal)
     await db.flush()
@@ -441,8 +486,8 @@ async def session_to_response(db: AsyncSession, session: SuggestionSession) -> o
 
     return SessionResponse(
         id=session.id,
-        dining_context_id=session.dining_context_id,
         meal_window_key=session.meal_window_key,
+        anchor_source=session.anchor_source,
         state=session.state,
         policy_version=session.policy_version,
         current_proposal=current_proposal,
@@ -491,10 +536,10 @@ async def _replay_outcome(db: AsyncSession, stored: ProposalResponse) -> Recorde
     than the current session state:
 
     - Go → ``accepted``; Not today → ``skipped`` (closed sessions never change).
-    - Another → the proposal it generated, i.e. the next sequence number in the
-      same session, with state ``active``; or ``exhausted`` when it generated
-      none.  Only the latest proposal can be unanswered, so sequence + 1 is
-      always the one this Another produced.
+    - Another or Been here already → the proposal it generated, i.e. the next
+      sequence number in the same session, with state ``active``; or
+      ``exhausted`` when it generated none.  Only the latest proposal can be
+      unanswered, so sequence + 1 is always the one this response produced.
     """
     if stored.response == "go":
         return RecordedResponse(response=stored, session_state="accepted", next_proposal=None)

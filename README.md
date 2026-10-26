@@ -13,15 +13,15 @@ This checkpoint proves that the local database, migrations, API, recommendation 
 | 3 — Expo vertical slice | Partially complete — local vertical slice implemented; tester-readiness work remains |
 | 4 — Notifications and private cohort readiness | Not started; not next |
 
-All local verification gates pass (2026-10-16, after the correctness-hardening pass):
+All local verification gates pass (2026-10-25, after the meal-schedule change):
 - 12 root spike tests
-- 148 API unit tests (lint, format, strict mypy clean)
-- 46 integration tests (PostGIS + real migrations + 6 concurrent DB tests) — **all pass**
-- 58 mobile Jest tests (TypeScript, ESLint, Expo Doctor 20/20 clean)
+- 163 API unit tests (lint, format, strict mypy clean)
+- 51 integration tests (PostGIS + real migrations + 6 concurrent DB tests) — **all pass**
+- 70 mobile Jest tests (TypeScript, ESLint, Expo Doctor 20/20 clean)
 
-Stack: FastAPI + SQLAlchemy 2 async API; Expo SDK 58 mobile app (React Native 0.88, Expo Router `~58.0.24`).
+Stack: FastAPI + SQLAlchemy 2 async API; Expo SDK 58 mobile app (React Native 0.88, Expo Router `~58.0.26`).
 
-**Next:** complete Milestone 3 (see [Next milestone](#next-milestone)). On 2026-10-20 the product direction changed to current-location-first with live Google Places data (DECISIONS.md D019–D028); the code below still reflects the earlier design.
+**Next:** complete Milestone 3 (see [Next milestone](#next-milestone)). On 2026-10-20 the product direction changed to current-location-first with live Google Places data (DECISIONS.md D019–D028). The meal schedule (D020), price-ceiling setting (D026), and Been here already (D025) are implemented; suggestions still use fixture places and a placeholder location.
 
 Running locally:
 - Docker Compose: PostgreSQL 16.4 + PostGIS 3.4
@@ -114,7 +114,7 @@ With `AUTH_LOCAL_DEV=true`, the Bearer token is any UUID string representing you
 
 ```bash
 curl -H "Authorization: Bearer 00000000-0000-0000-0000-000000000001" \
-  http://localhost:8000/v1/contexts
+  http://localhost:8000/v1/me/meal-schedule
 ```
 
 ---
@@ -154,7 +154,7 @@ uv run pytest tests/ -q
 ```bash
 cd services/api
 uv run --frozen pytest tests/ -q -m "not integration"
-# Expected: 148 passed
+# Expected: 163 passed
 ```
 
 ### API integration tests (requires PostgreSQL)
@@ -177,7 +177,7 @@ DATABASE_URL=postgresql+asyncpg://nosh:nosh_dev@localhost:5433/nosh_test \
 APP_ENVIRONMENT=test \
 AUTH_LOCAL_DEV=true \
   uv run --frozen pytest tests/ -v -m "integration"
-# Expected: 46 passed (includes 6 genuine concurrent-DB tests)
+# Expected: 51 passed (includes 6 genuine concurrent-DB tests)
 ```
 
 In CI, GitHub Actions maps the postgres service container to port 5432 and sets `DATABASE_URL` accordingly in `ci.yml`.
@@ -219,7 +219,7 @@ cd apps/mobile
 npm ci
 npm run typecheck       # TypeScript strict
 npm run lint            # ESLint
-npm test -- --runInBand # Jest unit tests (58 tests)
+npm test -- --runInBand # Jest unit tests (70 tests)
 npx expo install --check
 npx expo-doctor
 ```
@@ -237,20 +237,21 @@ git diff --check
 | Area | Status |
 |---|---|
 | Backend foundation (health, DB, migrations) | Verified locally against Docker PostgreSQL; migration round-trip and `alembic check` pass |
-| 16 API routes (`/v1`) | Implemented and type-checked |
+| 15 API routes (`/v1`) | Implemented and type-checked |
 | policy_v0 recommendation engine | Pure-function, deterministic, 13 unit tests |
 | Fixture restaurants (20 places, SF Mission) | Loadable via seed command above |
-| Go / Another / Not today state machine | Implemented with idempotency |
+| Meal schedule (lunch/dinner, days, window, price ceiling) and Home/Work spots | Implemented (migration 0005); the app's survey sets the schedule |
+| Go / Another / Not today / Been here already state machine | Implemented with idempotency; candidates ranked once per session |
 | Visit confirmation + rating + history + progress | Implemented |
 | Strict mypy | 0 errors |
-| Mobile app (Expo SDK 58, Expo Router `~58.0.24`) | All MVP screens; Supabase email-code sign-in; TypeScript + ESLint + 58 Jest tests + Expo Doctor (20/20) pass |
-| Integration tests | 46 tests covering full flow, provenance, validation, replay, pagination, and concurrency; requires PostgreSQL |
+| Mobile app (Expo SDK 58, Expo Router `~58.0.26`) | All MVP screens; Supabase email-code sign-in; meal-time survey; TypeScript + ESLint + 70 Jest tests + Expo Doctor (20/20) pass |
+| Integration tests | 51 tests covering full flow, schedules, anchors, provenance, validation, replay, pagination, and concurrency; requires PostgreSQL |
 | Place importer | `uv run --frozen python -m jobs.ingest_places.importer` from `services/api` |
 
 ## What is not yet complete
 
 - **End-to-end local flow without Docker:** requires PostgreSQL running.
-- **Meal schedule and location (Milestone 3):** context creation hardcodes the SF Mission coordinate, a 1,600 m radius, and every active day; D020 replaces dining contexts with a meal schedule and current location.
+- **Current location (Milestone 3):** the app anchors every session at a placeholder SF Mission point and has no Home/Work setup screen yet (the API supports both); the price ceiling is stored but not yet applied (`policy_v1`).
 - **Place data (Milestone 3):** suggestions use 20 fictional fixture places; D021 moves to live Google Places data.
 - **Offline resilience (Milestone 3):** session identifiers are not persisted, and idempotent response writes are not queued during transient network failures.
 - **EAS/TestFlight build (Milestone 3):** not configured.
@@ -258,14 +259,14 @@ git diff --check
 - **Notifications (Milestone 4, not started):** Expo push tokens, scheduler/worker, confirmation prompts.
 - **API hosting vendor:** deferred per D012.
 
-### Dependency audit (mobile, 2026-10-21, Expo SDK 58)
+### Dependency audit (mobile, 2026-10-25, Expo SDK 58.0.19)
 
 | Command | Moderate | High | Critical | Total |
 |---|---|---|---|---|
-| `npm audit` | 25 | 28 | 0 | 53 |
-| `npm audit --omit=dev` | 7 | 19 | 0 | 26 |
+| `npm audit` | 0 | 5 | 0 | 5 |
+| `npm audit --omit=dev` | 0 | 5 | 0 | 5 |
 
-The findings reach the app through `expo`, `react-native`, and `jest-expo`. The only remedies npm proposes are semver-major downgrades (`expo@44`, `react-native@0.72`, `jest-expo@56`), so `npm audit fix` / `--force` has deliberately not been run. On SDK 53 (2026-10-13) the counts were 60 total and 37 production.
+All five come from Expo's CLI tooling: `expo` → `@expo/cli` → `@expo/code-signing-certificates` → `node-forge`, and `zod`. npm's only proposed remedy is a semver-major downgrade (`expo@54`), so `npm audit fix` / `--force` has deliberately not been run. On SDK 58.0.16 (2026-10-21) the counts were 53 total and 26 production; on SDK 53 (2026-10-13), 60 and 37.
 
 ---|---|---|---|---|
 | `npm audit` | 16 | 44 | 0 | 60 |
@@ -295,21 +296,21 @@ uv run python -m spike.cuisine_policy_sim --users 500
 ## Project structure
 
 ```
-apps/mobile/          Expo SDK 58 React Native iOS-first client (Expo Router ~58.0.24)
+apps/mobile/          Expo SDK 58 React Native iOS-first client (Expo Router ~58.0.26)
 services/api/         FastAPI modular monolith
   app/
     auth/             Supabase JWT validation (JWKS RS256/ES256; legacy HS256) + local-dev UUID adapter
-    contexts/         Dining context CRUD
-    places/           Place catalog, PostGIS filtering, onboarding
+    schedules/        Meal schedule and Home/Work anchors
+    places/           Place catalog, PostGIS filtering, manual place state
     recommendations/  policy_v0 pure engine (Thompson sampling + weighted scoring)
-    suggestions/      Session lifecycle, Go/Another/Not today state machine
+    suggestions/      Session lifecycle, candidate queue, Go/Another/Not today/Been here already
     visits/           Confirmation, ratings, history, monthly progress
     core/             Database, errors, async engine
   jobs/               Batch jobs in the API project (ingest_places importer)
-  alembic/            Migrations 0001–0004 (upgrade + downgrade tested)
+  alembic/            Migrations 0001–0005 (upgrade + downgrade tested)
   tests/
     test_auth.py                30 unit tests
-    test_context_validation.py  70 unit tests (schedule + meal-window rules, API 422s)
+    test_schedule_validation.py 85 unit tests (schedule + meal-window rules, API 422s)
     test_health.py              4 unit tests
     test_job_imports.py         3 unit tests (job import-path guard)
     test_priors.py              7 unit tests (cuisine prior provenance)
@@ -317,7 +318,7 @@ services/api/         FastAPI modular monolith
     test_recommendations.py     13 unit tests (engine mechanics)
     test_suggestion_invariants.py  9 invariant tests
     test_state_machine.py       4 documentation tests
-    test_integration.py         46 integration tests (PostgreSQL required)
+    test_integration.py         51 integration tests (PostgreSQL required)
 spike/                Cuisine-policy simulation (preserved, 12 tests)
 tests/                Root spike tests
 db/                   Docker init SQL (PostGIS; pgvector deferred per D013)
@@ -329,9 +330,9 @@ db/                   Docker init SQL (PostGIS; pgvector deferred per D013)
 
 1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21; App Store Connect requires Xcode 26 builds.
 2. ~~Supabase passwordless email authentication~~ — done 2026-10-21 (email one-time code, one session provider, per-user query cache).
-3. Meal schedule (weekday lunch default, dinner opt-in), per-meal price ceiling, and optional Home/Work fallback spots replace dining contexts (D020, D026).
-4. Live Google Places candidates behind a place-provider abstraction (fixtures in tests), `policy_v1` ranking, and Been here already (D021, D022, D024, D025).
-5. Foreground current location at open time, a Google map on the card, and Google Maps handoff. No background location.
+3. ~~Meal schedule (weekday lunch default, dinner opt-in), per-meal price ceiling, and optional Home/Work fallback spots replace dining contexts (D020, D026)~~ — done 2026-10-25, with Been here already (D025).
+4. Live Google Places candidates behind a place-provider abstraction (fixtures in tests) and `policy_v1` ranking, including the price ceiling (D021, D022, D024, D026).
+5. Foreground current location at open time, Home/Work setup, a Google map on the card, and Google Maps handoff. No background location.
 6. Persist session and proposal identifiers and queue idempotent writes during transient network failures; provider content is not cached (D022).
 7. EAS development/TestFlight build, real bundle identifier, and real app and notification icons.
 

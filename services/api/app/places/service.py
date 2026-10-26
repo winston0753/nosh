@@ -9,9 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.contexts.models import DiningContext
-from app.contexts.service import get_context_for_user
-from app.core.errors import NoshError, NotFoundError
+from app.core.errors import NotFoundError
 from app.places.models import Cuisine, Place, PlaceCuisine, PlaceSource, UserPlaceState
 from app.recommendations.types import CandidatePlace
 
@@ -161,50 +159,6 @@ async def set_user_place_state(
     return row
 
 
-async def classify_onboarding_place(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    context_id: uuid.UUID,
-    place_id: uuid.UUID,
-    state: str,
-) -> UserPlaceState:
-    """Record an onboarding classification (Been / Not been / Not interested).
-
-    The place must be an active place inside the context's radius — the same
-    set the onboarding list presents.  Been sets ``was_visited_before_nosh``
-    permanently, so a later Nosh visit to the place never counts toward the
-    North Star.
-    """
-    ctx = await get_context_for_user(db, context_id, user_id)
-    await require_place(db, place_id)
-    in_context = await db.execute(
-        select(Place.id)
-        .join(DiningContext, DiningContext.id == context_id)
-        .where(
-            Place.id == place_id,
-            Place.status == "active",
-            ST_DWithin(Place.location, DiningContext.location, float(ctx.radius_meters)),
-        )
-    )
-    if in_context.scalar_one_or_none() is None:
-        raise NoshError(
-            code="place_not_in_context",
-            message="Place is not an active onboarding place for this context",
-            status_code=422,
-            field="place_id",
-        )
-    row = await upsert_user_place_state(
-        db,
-        user_id,
-        place_id,
-        state,
-        "onboarding",
-        visited_before_nosh=state == "visited",
-    )
-    await db.commit()
-    return row
-
-
 async def build_candidates(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -250,23 +204,3 @@ async def build_candidates(
         )
 
     return candidates
-
-
-async def get_onboarding_places(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    longitude: float,
-    latitude: float,
-    radius_meters: float,
-    limit: int = 50,
-) -> list[tuple[Place, float, str]]:
-    """Return nearby places with their current user state for onboarding."""
-    places_with_distance = await get_places_within_radius(db, longitude, latitude, radius_meters)
-    place_ids = [p.id for p, _ in places_with_distance]
-    user_states = await get_user_place_states(db, user_id, place_ids)
-
-    result = []
-    for place, distance_m in places_with_distance[:limit]:
-        state = user_states.get(place.id, "unknown")
-        result.append((place, float(distance_m), state))
-    return result

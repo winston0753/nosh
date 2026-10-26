@@ -7,15 +7,18 @@
  */
 
 import type {
-  Context,
-  ContextCreate,
-  OnboardingPlace,
+  Anchor,
+  AnchorKind,
+  Coordinate,
+  MealSchedule,
+  MealScheduleUpdate,
   PlaceState,
   PlaceStateValue,
   Progress,
   ResponseAction,
   ResponseResult,
   Session,
+  SessionAnchor,
   Visit,
   VisitCreate,
 } from './types';
@@ -72,40 +75,36 @@ export class NoshClient {
     return this.request('/v1/me/product-data', { method: 'DELETE' });
   }
 
-  // ---- Contexts ----
+  // ---- Meal schedule and Home/Work spots ----
 
-  listContexts(): Promise<Context[]> {
-    return this.request('/v1/contexts');
+  getMealSchedule(): Promise<MealSchedule> {
+    return this.request('/v1/me/meal-schedule');
   }
 
-  createContext(body: ContextCreate): Promise<Context> {
-    return this.request('/v1/contexts', {
-      method: 'POST',
+  /** Full replacement; an identical PUT is a no-op, so retries are safe. */
+  putMealSchedule(body: MealScheduleUpdate): Promise<MealSchedule> {
+    return this.request('/v1/me/meal-schedule', {
+      method: 'PUT',
       body: JSON.stringify(body),
     });
   }
 
-  // ---- Onboarding ----
-
-  getOnboardingPlaces(contextId: string, limit = 30): Promise<OnboardingPlace[]> {
-    return this.request(`/v1/contexts/${contextId}/onboarding-places?limit=${limit}`);
+  listAnchors(): Promise<Anchor[]> {
+    return this.request('/v1/me/anchors');
   }
 
-  /**
-   * Onboarding classification (Been / Not been / Not interested).  Records
-   * source='onboarding'; Been permanently marks the place as visited before
-   * Nosh so it never counts toward the North Star.
-   */
-  classifyOnboardingPlace(
-    contextId: string,
-    placeId: string,
-    state: PlaceStateValue,
-  ): Promise<PlaceState> {
-    return this.request(`/v1/contexts/${contextId}/onboarding-places/${placeId}/state`, {
+  setAnchor(kind: AnchorKind, point: Coordinate): Promise<Anchor> {
+    return this.request(`/v1/me/anchors/${kind}`, {
       method: 'PUT',
-      body: JSON.stringify({ state }),
+      body: JSON.stringify(point),
     });
   }
+
+  deleteAnchor(kind: AnchorKind): Promise<void> {
+    return this.request(`/v1/me/anchors/${kind}`, { method: 'DELETE' });
+  }
+
+  // ---- Places ----
 
   /** Manual place-state edit (settings).  Never marks a place as pre-Nosh. */
   setPlaceState(placeId: string, state: PlaceStateValue): Promise<PlaceState> {
@@ -117,13 +116,14 @@ export class NoshClient {
 
   // ---- Sessions ----
 
-  createOrGetSession(contextId: string, mealWindowKey: string): Promise<Session> {
+  /**
+   * Open (or fetch) the session for a meal window.  The location is used once
+   * to rank nearby places and is never stored by the API.
+   */
+  createOrGetSession(mealWindowKey: string, anchor: SessionAnchor): Promise<Session> {
     return this.request('/v1/suggestion-sessions', {
       method: 'POST',
-      body: JSON.stringify({
-        dining_context_id: contextId,
-        meal_window_key: mealWindowKey,
-      }),
+      body: JSON.stringify({ meal_window_key: mealWindowKey, ...anchor }),
     });
   }
 

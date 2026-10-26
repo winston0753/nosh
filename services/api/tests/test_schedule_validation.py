@@ -1,25 +1,23 @@
-"""Strict dining-context and meal-window-key validation (no database required).
+"""Strict meal-schedule and meal-window-key validation (no database required).
 
 Schema validation runs before any database access, so the API negative tests
-use the unit-test client.  Checks that depend on a stored context (PATCH
-merging, session keys) live in test_integration.py.
+use the unit-test client.  Checks that depend on a stored schedule (session
+keys, overlapping meals) live in test_integration.py.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from app.contexts import validation
+from app.schedules import validation
 
-_VALID = {
-    "name": "Office Lunch",
+_LUNCH = {
     "meal_type": "lunch",
-    "longitude": -122.419,
-    "latitude": 37.759,
+    "enabled": True,
     "local_window_start": "11:30",
     "local_window_end": "13:30",
-    "time_zone": "America/Los_Angeles",
     "active_days": [0, 1, 2, 3, 4],
+    "price_ceiling": 2,
 }
 
 # --------------------------------------------------------------------------- #
@@ -69,6 +67,20 @@ def test_validate_window_rejects_overnight_and_empty(start: str, end: str) -> No
         validation.validate_window(start, end)
 
 
+@pytest.mark.parametrize(
+    ("a", "b", "overlap"),
+    [
+        (("11:30", "13:30"), ("17:30", "20:30"), False),
+        (("11:30", "13:30"), ("13:30", "15:00"), False),  # touching is not overlapping
+        (("11:30", "14:00"), ("13:30", "15:00"), True),
+        (("12:00", "13:00"), ("11:00", "14:00"), True),  # nested
+    ],
+)
+def test_windows_overlap(a: tuple[str, str], b: tuple[str, str], overlap: bool) -> None:
+    assert validation.windows_overlap(*a, *b) is overlap
+    assert validation.windows_overlap(*b, *a) is overlap
+
+
 def _check(key: str, **overrides: object) -> None:
     ctx: dict[str, object] = {
         "meal_type": "dinner",
@@ -109,32 +121,40 @@ def test_meal_window_key_inconsistent_rejected(key: str, overrides: dict[str, ob
 # --------------------------------------------------------------------------- #
 
 
+def _put_schedule(client, auth_headers, meal_override=None, **body_override):
+    body = {
+        "time_zone": "America/Los_Angeles",
+        "meals": [{**_LUNCH, **(meal_override or {})}],
+        **body_override,
+    }
+    return client.put("/v1/me/meal-schedule", json=body, headers=auth_headers)
+
+
 @pytest.mark.parametrize(
     ("override", "field"),
     [
-        ({"local_window_start": "25:99"}, "local_window_start"),
-        ({"local_window_start": "24:00"}, "local_window_start"),
-        ({"local_window_end": "13:60"}, "local_window_end"),
-        ({"local_window_end": "1:30"}, "local_window_end"),
-        ({"time_zone": "Not/AZone"}, "time_zone"),
-        ({"time_zone": ""}, "time_zone"),
-        ({"time_zone": "../../etc/passwd"}, "time_zone"),
-        ({"active_days": []}, "active_days"),
-        ({"active_days": [0, 0]}, "active_days"),
-        ({"active_days": [7]}, "active_days"),
-        ({"active_days": [-1]}, "active_days"),
-        ({"active_days": ["1"]}, "active_days.0"),
-        ({"active_days": [1.0]}, "active_days.0"),
-        ({"active_days": [True]}, "active_days.0"),
-        ({"active_days": [0, 1, 2, 3, 4, 5, 6, 0]}, "active_days"),
-        ({"local_window_start": "22:00", "local_window_end": "02:00"}, "local_window_end"),
-        ({"local_window_start": "12:00", "local_window_end": "12:00"}, "local_window_end"),
-        ({"local_window_start": "13:00", "local_window_end": "12:00"}, "local_window_end"),
-        ({"meal_type": "supper"}, "meal_type"),
+        ({"local_window_start": "25:99"}, "meals.0.local_window_start"),
+        ({"local_window_start": "24:00"}, "meals.0.local_window_start"),
+        ({"local_window_end": "13:60"}, "meals.0.local_window_end"),
+        ({"local_window_end": "1:30"}, "meals.0.local_window_end"),
+        ({"active_days": []}, "meals.0.active_days"),
+        ({"active_days": [0, 0]}, "meals.0.active_days"),
+        ({"active_days": [7]}, "meals.0.active_days"),
+        ({"active_days": [-1]}, "meals.0.active_days"),
+        ({"active_days": ["1"]}, "meals.0.active_days.0"),
+        ({"active_days": [1.0]}, "meals.0.active_days.0"),
+        ({"active_days": [True]}, "meals.0.active_days.0"),
+        ({"active_days": [0, 1, 2, 3, 4, 5, 6, 0]}, "meals.0.active_days"),
+        ({"local_window_start": "22:00", "local_window_end": "02:00"}, "meals.0.local_window_end"),
+        ({"local_window_start": "12:00", "local_window_end": "12:00"}, "meals.0.local_window_end"),
+        ({"local_window_start": "13:00", "local_window_end": "12:00"}, "meals.0.local_window_end"),
+        ({"meal_type": "brunch"}, "meals.0.meal_type"),
+        ({"price_ceiling": 0}, "meals.0.price_ceiling"),
+        ({"price_ceiling": 5}, "meals.0.price_ceiling"),
     ],
 )
-def test_create_context_rejects_invalid(client, auth_headers, override, field) -> None:
-    resp = client.post("/v1/contexts", json={**_VALID, **override}, headers=auth_headers)
+def test_meal_schedule_rejects_invalid_meal(client, auth_headers, override, field) -> None:
+    resp = _put_schedule(client, auth_headers, override)
     assert resp.status_code == 422, resp.text
     body = resp.json()
     assert body["code"] == "validation_error"
@@ -146,28 +166,68 @@ def test_create_context_rejects_invalid(client, auth_headers, override, field) -
 @pytest.mark.parametrize(
     ("override", "field"),
     [
-        ({"local_window_start": "7:00"}, "local_window_start"),
-        ({"time_zone": "Mars/Olympus"}, "time_zone"),
-        ({"active_days": [1, 1]}, "active_days"),
-        ({"active_days": []}, "active_days"),
+        ({"time_zone": "Not/AZone"}, "time_zone"),
+        ({"time_zone": ""}, "time_zone"),
+        ({"time_zone": "../../etc/passwd"}, "time_zone"),
+        ({"meals": []}, "meals"),
+        ({"meals": [_LUNCH, _LUNCH]}, "meals"),
     ],
 )
-def test_update_context_rejects_invalid_fields(client, auth_headers, override, field) -> None:
-    resp = client.patch(
-        "/v1/contexts/00000000-0000-0000-0000-00000000c0de", json=override, headers=auth_headers
-    )
+def test_meal_schedule_rejects_invalid_body(client, auth_headers, override, field) -> None:
+    resp = _put_schedule(client, auth_headers, **override)
     assert resp.status_code == 422, resp.text
     assert resp.json()["code"] == "validation_error"
     assert resp.json()["field"] == field
 
 
-@pytest.mark.parametrize("key", ["2026-10-12", "2026-10-12#supper", "x#dinner", ""])
+@pytest.mark.parametrize("kind", ["office", "HOME", ""])
+def test_anchor_kind_rejected(client, auth_headers, kind: str) -> None:
+    resp = client.put(
+        f"/v1/me/anchors/{kind}", json={"latitude": 37.7, "longitude": -122.4}, headers=auth_headers
+    )
+    assert resp.status_code in (404, 405, 422), resp.text
+
+
+@pytest.mark.parametrize(
+    "coords", [{"latitude": 91, "longitude": 0}, {"latitude": 0, "longitude": -181}, {}]
+)
+def test_anchor_coordinates_rejected(client, auth_headers, coords) -> None:
+    resp = client.put("/v1/me/anchors/home", json=coords, headers=auth_headers)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "validation_error"
+
+
+_HERE = {"latitude": 37.759, "longitude": -122.419}
+
+
+@pytest.mark.parametrize(
+    "key", ["2026-10-12", "2026-10-12#supper", "2026-10-12#brunch", "x#lunch", ""]
+)
 def test_session_key_shape_rejected(client, auth_headers, key: str) -> None:
     resp = client.post(
         "/v1/suggestion-sessions",
-        json={"dining_context_id": "00000000-0000-0000-0000-00000000c0de", "meal_window_key": key},
+        json={"meal_window_key": key, "location": _HERE},
         headers=auth_headers,
     )
     assert resp.status_code == 422, resp.text
     assert resp.json()["code"] == "validation_error"
     assert resp.json()["field"] == "meal_window_key"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},  # neither
+        {"location": _HERE, "anchor": "home"},  # both
+        {"anchor": "office"},
+        {"location": {"latitude": 95, "longitude": 0}},
+    ],
+)
+def test_session_anchor_shape_rejected(client, auth_headers, extra) -> None:
+    resp = client.post(
+        "/v1/suggestion-sessions",
+        json={"meal_window_key": "2026-10-12#lunch", **extra},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "validation_error"

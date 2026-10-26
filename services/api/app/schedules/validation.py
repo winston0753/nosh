@@ -1,4 +1,4 @@
-"""Pure validation rules for dining-context schedules and meal-window keys.
+"""Pure validation rules for meal schedules and meal-window keys.
 
 Conventions
 -----------
@@ -7,7 +7,9 @@ Conventions
 - A window must end strictly after it starts on the same local day.  Overnight
   windows (end <= start) are rejected; see DECISIONS.md D016.
 - A meal-window key is ``YYYY-MM-DD#meal_type`` where the date is the local
-  calendar date in the context's IANA time zone.
+  calendar date in the meal schedule's IANA time zone.
+- Two enabled meals that share an active day must not have overlapping
+  windows, so at most one meal is open at any moment.
 
 Every function raises ``ValueError`` with a human-readable message on failure
 so it can be used from Pydantic validators and from application services.
@@ -21,7 +23,7 @@ from datetime import date
 from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-MEAL_TYPES = ("lunch", "dinner", "brunch")
+MEAL_TYPES = ("lunch", "dinner")
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _WINDOW_KEY = re.compile(r"^(\d{4}-\d{2}-\d{2})#([a-z]+)$")
@@ -75,6 +77,13 @@ def validate_window(start: str, end: str) -> None:
         )
 
 
+def windows_overlap(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
+    """True when two same-day windows share at least one minute."""
+    return parse_local_time(a_start) < parse_local_time(b_end) and parse_local_time(
+        b_start
+    ) < parse_local_time(a_end)
+
+
 def parse_meal_window_key(key: str) -> tuple[date, str]:
     """Split ``YYYY-MM-DD#meal_type`` into a real calendar date and a meal type."""
     match = _WINDOW_KEY.fullmatch(key)
@@ -99,17 +108,17 @@ def check_meal_window_key(
     local_window_start: str,
     local_window_end: str,
 ) -> None:
-    """Verify that a meal-window key is consistent with a dining context.
+    """Verify that a meal-window key is consistent with one meal of a schedule.
 
-    Checks that the key's date is real, its meal type matches the context,
-    its weekday is one of the context's active days, and that the context's
-    own schedule (time zone and local window) is valid.  The last two guard
-    against rows written before strict validation existed.
+    Checks that the key's date is real, its meal type matches the meal, its
+    weekday is one of the meal's active days, and that the stored schedule
+    (time zone and local window) is valid.  The last two guard against rows
+    written before strict validation existed.
     """
     local_date, key_meal = parse_meal_window_key(key)
     if key_meal != meal_type:
-        raise ValueError(f"meal type {key_meal!r} does not match the context's {meal_type!r}")
+        raise ValueError(f"meal type {key_meal!r} does not match the schedule's {meal_type!r}")
     if local_date.weekday() not in active_days:
-        raise ValueError(f"{local_date.isoformat()} is not one of the context's active days")
+        raise ValueError(f"{local_date.isoformat()} is not one of the meal's active days")
     validate_time_zone(time_zone)
     validate_window(local_window_start, local_window_end)

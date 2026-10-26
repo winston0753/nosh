@@ -358,18 +358,21 @@ def test_liveness_requires_no_auth(client: Any) -> None:
 
 
 def test_protected_endpoint_without_token_returns_4xx(client: Any) -> None:
-    resp = client.get("/v1/contexts")
+    resp = client.get("/v1/me/meal-schedule")
     assert resp.status_code in (401, 403)
 
 
 def test_protected_endpoint_with_local_dev_token_passes_auth(app: Any) -> None:
     from starlette.testclient import TestClient
 
+    from app.schedules.schemas import MealScheduleResponse
+
     uid = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    empty = MealScheduleResponse(meals=[])
     with (
-        patch("app.contexts.service.list_contexts", AsyncMock(return_value=[])),
+        patch("app.schedules.service.get_meal_schedule", AsyncMock(return_value=empty)),
         TestClient(app, raise_server_exceptions=False) as c,
     ):
-        resp = c.get("/v1/contexts", headers={"Authorization": f"Bearer {uid}"})
+        resp = c.get("/v1/me/meal-schedule", headers={"Authorization": f"Bearer {uid}"})
 
     assert resp.status_code not in (401, 403)

@@ -7,10 +7,10 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 # Import all models so metadata is populated
-from app.contexts.models import DiningContext  # noqa: F401
 from app.core.database import Base
 from app.notifications.models import DeviceToken, NotificationDelivery  # noqa: F401
 from app.places.models import Cuisine, Place, PlaceCuisine, PlaceSource, UserPlaceState  # noqa: F401
+from app.schedules.models import MealSchedule, SavedAnchor  # noqa: F401
 from app.suggestions.models import Proposal, ProposalResponse, SuggestionSession  # noqa: F401
 from app.users.models import Profile  # noqa: F401
 from app.visits.models import Visit  # noqa: F401

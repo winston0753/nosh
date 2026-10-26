@@ -46,9 +46,9 @@ On 2026-10-20 the product direction changed to current-location-first with live 
 
 1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21; TestFlight uploads require Xcode 26.
 2. ~~Supabase passwordless email authentication in the mobile app~~ — done 2026-10-21 (email one-time code, per-user query keys, cache clearing on user change).
-3. Meal schedule (weekday lunch default, dinner opt-in, per-meal price ceiling) and optional Home/Work fallback spots replace dining contexts; sessions keyed by user and meal window (D020, D026).
-4. Place-provider abstraction with a Google Places implementation and a fixture implementation for tests; `policy_v1` ranking (D021, D022, D024); Been here already (D025). Settle first how a visit's cuisine label is captured without storing Google-derived data (D022).
-5. Mobile flow: foreground location at open time, Google map and attribution on the card, Google Maps handoff, live history details.
+3. ~~Meal schedule (weekday lunch default, dinner opt-in, per-meal price ceiling) and optional Home/Work fallback spots replace dining contexts; sessions keyed by user and meal window (D020, D026)~~ — done 2026-10-25 (migration 0005; Been here already from D025 landed here too, because the context-scoped onboarding endpoints went with contexts; the app anchors sessions at a placeholder SF point until step 5).
+4. Place-provider abstraction with a Google Places implementation and a fixture implementation for tests; `policy_v1` ranking, including the price-ceiling filter (D021, D022, D024, D026). Settle first how a visit's cuisine label is captured without storing Google-derived data (D022).
+5. Mobile flow: foreground location at open time (replacing the placeholder point), Home/Work spot setup, Google map and attribution on the card, Google Maps handoff, live history details.
 6. Offline resilience: persist session and proposal identifiers and queue idempotent writes (provider content is not cached, D022).
 7. EAS development/TestFlight build, a real bundle identifier, and real app and notification icons.
 

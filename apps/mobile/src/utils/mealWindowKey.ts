@@ -2,8 +2,8 @@
  * Deterministic meal-window key derivation.
  *
  * Key format: YYYY-MM-DD#meal_type
- *   - YYYY-MM-DD is the calendar date in the context's IANA time zone
- *   - meal_type is the context's configured meal type
+ *   - YYYY-MM-DD is the calendar date in the meal schedule's IANA time zone
+ *   - meal_type is the meal (lunch or dinner)
  *
  * mealWindowKey() returns null when:
  *   - today is not in active_days
@@ -17,11 +17,11 @@
  * converts for you.
  *
  * Overnight windows (local_window_end <= local_window_start in total
- * minutes) are rejected — return null.  The server validates this on
- * context creation.
+ * minutes) are rejected — return null.  The server validates this when the
+ * schedule is saved.
  */
 
-import type { Context } from '../api/types';
+import type { MealPlan, MealType } from '../api/types';
 
 // ---------------------------------------------------------------------------
 // Low-level locale-agnostic helpers
@@ -115,13 +115,13 @@ export function parseWindowMinutes(hhmm: string): number | null {
 // Public API
 // ---------------------------------------------------------------------------
 
-type ContextWindow = Pick<
-  Context,
+export type MealWindow = Pick<
+  MealPlan,
   'meal_type' | 'local_window_start' | 'local_window_end' | 'time_zone' | 'active_days'
 >;
 
 /**
- * Determine whether a meal window is active at `now` for the given context.
+ * Determine whether a meal's window is active at `now`.
  *
  * Returns the meal_type string when:
  *   - `timeZone` is a valid IANA zone,
@@ -131,11 +131,11 @@ type ContextWindow = Pick<
  *
  * Returns null in all other cases.
  */
-export function activeMealType(context: ContextWindow, now: Date): string | null {
-  const zone = context.time_zone;
+export function activeMealType(meal: MealWindow, now: Date): MealType | null {
+  const zone = meal.time_zone;
 
-  const startMin = parseWindowMinutes(context.local_window_start);
-  const endMin = parseWindowMinutes(context.local_window_end);
+  const startMin = parseWindowMinutes(meal.local_window_start);
+  const endMin = parseWindowMinutes(meal.local_window_end);
   if (startMin === null || endMin === null) return null;
 
   // Reject overnight windows (server-side validation should prevent these).
@@ -143,33 +143,49 @@ export function activeMealType(context: ContextWindow, now: Date): string | null
 
   const weekday = localWeekdayInZone(now, zone);
   if (weekday === null) return null;
-  if (!context.active_days.includes(weekday)) return null;
+  if (!meal.active_days.includes(weekday)) return null;
 
   const time = localTimeInZone(now, zone);
   if (time === null) return null;
   const nowMin = time.hour * 60 + time.minute;
 
-  if (nowMin >= startMin && nowMin < endMin) return context.meal_type;
+  if (nowMin >= startMin && nowMin < endMin) return meal.meal_type;
   return null;
 }
 
 /**
- * Build the meal-window key for the given context and timestamp.
+ * Build the meal-window key for the given meal and timestamp.
  *
  * Returns null when no window is currently active (outside hours, wrong day,
  * or invalid time zone).  Callers must not create a suggestion session when
  * this returns null.
  *
- * @param context The active dining context.
- * @param now     The current instant.  Defaults to `new Date()` in production;
- *                pass explicitly for deterministic testing.
+ * @param meal One meal of the user's schedule.
+ * @param now  The current instant.  Defaults to `new Date()` in production;
+ *             pass explicitly for deterministic testing.
  */
-export function mealWindowKey(context: ContextWindow, now: Date = new Date()): string | null {
-  const meal = activeMealType(context, now);
-  if (meal === null) return null;
+export function mealWindowKey(meal: MealWindow, now: Date = new Date()): string | null {
+  const mealType = activeMealType(meal, now);
+  if (mealType === null) return null;
 
-  const date = localDateInZone(now, context.time_zone);
+  const date = localDateInZone(now, meal.time_zone);
   if (date === null) return null;
 
-  return `${date}#${meal}`;
+  return `${date}#${mealType}`;
+}
+
+/**
+ * Return the enabled meal whose window is open at `now`, with its key, or
+ * null.  The server rejects overlapping enabled meals, so at most one is open.
+ */
+export function openMealWindow<M extends MealWindow & { enabled: boolean }>(
+  meals: readonly M[],
+  now: Date = new Date(),
+): { meal: M; key: string } | null {
+  for (const meal of meals) {
+    if (!meal.enabled) continue;
+    const key = mealWindowKey(meal, now);
+    if (key !== null) return { meal, key };
+  }
+  return null;
 }
