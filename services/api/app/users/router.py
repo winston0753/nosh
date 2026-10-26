@@ -24,9 +24,9 @@ async def delete_my_product_data(
 ) -> None:
     """Delete all Nosh product data owned by the current user.
 
-    This endpoint removes: dining contexts (cascades to sessions, proposals,
-    responses), visits, notification deliveries, place states, device tokens,
-    and the Nosh profile row.
+    This endpoint removes: suggestion sessions (cascades to proposals and
+    responses), the meal schedule, saved Home/Work spots, visits, notification
+    deliveries, place states, device tokens, and the Nosh profile row.
 
     It does NOT delete the Supabase Auth identity.  A user with a valid token
     can still authenticate after calling this endpoint; they will receive a

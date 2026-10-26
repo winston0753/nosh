@@ -97,8 +97,8 @@ nosh/
 │       ├── app/
 │       │   ├── api/
 │       │   ├── auth/
-│       │   ├── contexts/
 │       │   ├── places/
+│       │   ├── schedules/      # meal schedule and Home/Work anchors
 │       │   ├── recommendations/
 │       │   ├── suggestions/
 │       │   ├── visits/
@@ -156,7 +156,7 @@ The mobile client contains presentation logic, not recommendation logic.
 - Send at most one location-free nudge per user and meal window; the suggestion is created when the user opens the app (D023)
 - Create due visit-confirmation prompts
 - Retry transient failures with bounded backoff
-- Ignore disabled contexts and deleted users
+- Ignore disabled meals and deleted users
 
 The initial worker may poll PostgreSQL on a short interval. A message broker is not required at phase-one scale.
 
@@ -181,13 +181,11 @@ The initial worker may poll PostgreSQL on a short interval. A message broker is 
 
 ## 7. Database design
 
-This section describes the implemented schema (migrations 0001–0004). Accepted changes that are not yet implemented:
+This section describes the implemented schema (migrations 0001–0005). Migration 0005 replaced `dining_contexts` with `meal_schedules` and `saved_anchors` (D020, D026), re-keyed sessions by user, and added the session candidate queue (D022). Accepted changes that are not yet implemented:
 
-- **D020:** `dining_contexts` is replaced by a per-user meal schedule and optional Home/Work anchors; `suggestion_sessions` becomes unique on `(user_id, meal_window_key)`.
-- **D021/D022:** `places` becomes a registry of provider identifiers (Google `place_id`) without stored names, addresses, or metadata; a session stores its ranked list of place identifiers; `proposals.candidate_snapshot` keeps only identifiers, ranks, and Nosh-owned components.
-- **D025:** a Been here already event records `was_visited_before_nosh` from the card.
+- **D021/D022:** `places` becomes a registry of provider identifiers (Google `place_id`) without stored names, addresses, or metadata; queue entries and `proposals.candidate_snapshot` keep only identifiers, ranks, and Nosh-owned components.
 
-All user-owned tables include `user_id`, `created_at`, and `updated_at` where applicable. Timestamps are stored in UTC. Dining contexts also store an IANA time-zone name.
+All user-owned tables include `user_id`, `created_at`, and `updated_at` where applicable. Timestamps are stored in UTC. Meal schedules also store an IANA time-zone name.
 
 ### `profiles`
 
@@ -196,33 +194,35 @@ All user-owned tables include `user_id`, `created_at`, and `updated_at` where ap
 - `onboarding_state`
 - `deleted_at` nullable
 
-### `dining_contexts`
+### `meal_schedules`
 
-- `id` UUID
-- `user_id`
-- `name`
-- `meal_type`
-- `location` PostGIS geography point
-- `radius_meters`
-- `local_window_start`
-- `local_window_end`
+One row per user and meal (D020, D026); the survey sets weekday lunch on and dinner off by default.
+
+- `user_id`, `meal_type` (`lunch` or `dinner`) — composite primary key
+- `enabled`
+- `local_window_start`, `local_window_end`
 - `time_zone`
-- `active_days` integer array or bit mask
-- `notifications_enabled`
-- `version`
-- `disabled_at` nullable
+- `active_days` integer array
+- `price_ceiling` 1–4 (`$`–`$$$$`), NULL for no ceiling; stored now, enforced by `policy_v1` (D024)
+- `notifications_enabled` (Milestone 4)
+- `version`, incremented only when a stored value changes
 
-Create a GiST index on `location`. Do not include precise coordinates in application logs.
-
-Validation (DECISIONS.md D016; enforced on create and update):
+Validation (DECISIONS.md D016; enforced by `PUT /v1/me/meal-schedule`, which replaces the whole schedule):
 
 - `local_window_start` / `local_window_end` are strict 24-hour `HH:MM` (00:00–23:59);
 - the window ends strictly after it starts on the same local day — overnight and empty windows are rejected;
 - `time_zone` must load as an IANA zone;
 - `active_days` is a non-empty list of unique integers 0–6 (0 = Monday, Python `weekday()`);
-- PATCH re-checks the window against the stored bound when only one bound changes.
+- two enabled meals that share an active day must not overlap (field `meals`), so at most one window is open at a time.
 
 Failures return `422` with code `validation_error` and the offending `field`.
+
+### `saved_anchors`
+
+- `user_id`, `kind` (`home` or `work`) — composite primary key
+- `location` PostGIS geography point
+
+Optional Home/Work spots, used only when a session cannot use the device's foreground location (D020). The point is precise personal data: never log it; product-data deletion removes it.
 
 ### `places`
 
@@ -263,26 +263,29 @@ Failures return `422` with code `validation_error` and the offending `field`.
 - `user_id`
 - `place_id`
 - `state`: `unknown`, `visited`, or `not_interested`
-- `source`: onboarding, confirmation, manual edit, or import
-- `was_visited_before_nosh`: set only by an onboarding Been classification; never reset
+- `source`: `been_here`, `confirmation`, `manual`, `import`, or (historical) `onboarding`
+- `was_visited_before_nosh`: set only by Been here already (or historical onboarding Been); never reset
 - `occurred_at`
 - unique constraint on `(user_id, place_id)`
 
-Writes are a single `INSERT … ON CONFLICT (user_id, place_id) DO UPDATE`, so concurrent first-time writes cannot fail, and `was_visited_before_nosh` is OR-ed with the stored value so provenance survives any writer order. Only `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state` records `source = onboarding` and can set the flag (DECISIONS.md D018); the manual settings edit and visit confirmation never do.
+Writes are a single `INSERT … ON CONFLICT (user_id, place_id) DO UPDATE`, so concurrent first-time writes cannot fail, and `was_visited_before_nosh` is OR-ed with the stored value so provenance survives any writer order. Only a Been here already response records `source = been_here` and sets the flag (D018, D025); the manual settings edit and visit confirmation never do.
 
 ### `suggestion_sessions`
 
 - `id` UUID
 - `user_id`
-- `dining_context_id`
-- `context_version`
 - `meal_window_key`
+- `schedule_version` — the meal's `meal_schedules.version` at creation
+- `anchor_source` — `device`, `home`, or `work` (`legacy_context` for migrated sessions); the coordinate itself is never stored
 - `state`
 - `policy_version`
+- `candidate_queue` JSONB — ranked candidates not yet proposed
 - `created_at`, `closed_at`
-- unique constraint on `(dining_context_id, meal_window_key)`
+- unique constraint on `(user_id, meal_window_key)`
 
-`meal_window_key` is `YYYY-MM-DD#meal_type`, the local calendar date in the context's time zone. Session creation rejects (`422 validation_error`, field `meal_window_key`) a key whose date is not a real calendar date, whose meal type differs from the context's, or whose weekday is not an active day, and any context whose stored time zone or window is invalid.
+`meal_window_key` is `YYYY-MM-DD#meal_type`, the local calendar date in the meal schedule's time zone. Session creation rejects (`422 validation_error`, field `meal_window_key`) a key whose date is not a real calendar date, whose meal is not enabled in the user's schedule, or whose weekday is not an active day, and any schedule whose stored time zone or window is invalid. Creation locks the user's `meal_schedules` row so concurrent requests insert one session.
+
+At creation the API ranks every eligible candidate within walking range of the anchor once (`policy_v0`, in the order successive Another responses would produce) and stores the list in `candidate_queue`; the first entry becomes proposal 1. Another and Been here already turn the next entry into a proposal, so the anchor point is never needed again (D017, D022). The queue holds place IDs, scores, and distances, so it is emptied when the session closes and when the user opens a session for a newer meal window.
 
 ### `proposals`
 
@@ -369,14 +372,13 @@ Response writes lock the owning suggestion-session row before reading the stored
 GET    /v1/me
 DELETE /v1/me/product-data
 
-GET    /v1/contexts
-POST   /v1/contexts
-PATCH  /v1/contexts/{context_id}
-DELETE /v1/contexts/{context_id}
+GET    /v1/me/meal-schedule
+PUT    /v1/me/meal-schedule            # full replacement; idempotent
+GET    /v1/me/anchors
+PUT    /v1/me/anchors/{kind}           # home | work
+DELETE /v1/me/anchors/{kind}
 
-GET    /v1/contexts/{context_id}/onboarding-places
-PUT    /v1/contexts/{context_id}/onboarding-places/{place_id}/state   # onboarding classification
-PUT    /v1/places/{place_id}/state                                    # manual settings edit
+PUT    /v1/places/{place_id}/state     # manual settings edit
 
 POST   /v1/suggestion-sessions
 GET    /v1/suggestion-sessions/{session_id}
@@ -391,9 +393,11 @@ POST   /v1/devices                     # Milestone 4; not implemented
 DELETE /v1/devices/{device_id}         # Milestone 4; not implemented
 ```
 
-Sixteen routes are implemented today (the list above minus the two device routes). D020, D021, and D025 replace the context and onboarding routes and add a Been here already write; their contracts are designed with the implementation.
+Fifteen routes are implemented today (the list above minus the two device routes). D021 adds a live place-details route with the Google provider.
 
-`POST /v1/suggestion-sessions` returns the existing session if the same dining context and meal-window key are submitted again.
+`POST /v1/suggestion-sessions` takes `meal_window_key` and exactly one anchor: `location` (`{latitude, longitude}`, the device's foreground location — transient, never logged or stored) or `anchor` (`home` or `work`; `422 anchor_not_set` if that spot is not saved). It returns the existing session if the same user submits the same meal-window key again, whatever anchor the repeat carries.
+
+`POST /v1/proposals/{proposal_id}/responses` accepts `go`, `another`, `not_today`, and `been_here`. Been here already (D025) marks the place visited before Nosh and advances to the next proposal like Another; it is stored as its own response, not as Another, and replays the same way.
 
 ## 9. Suggestion state machine
 
@@ -401,8 +405,8 @@ Sixteen routes are implemented today (the list above minus the two device routes
 scheduled
     │
     ▼
-active ── Another ──► active with next proposal
-  │  │
+active ── Another / Been here already ──► active with next proposal
+  │  │                                    (exhausted when none remain)
   │  └── Not today ─► skipped
   │
   └── Go ───────────► accepted ─► awaiting confirmation

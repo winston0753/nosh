@@ -1,5 +1,73 @@
 # Project Notes
 
+## 2026-10-25 — Meal schedule replaces dining contexts (Milestone 3 item 3, branch `meal-schedule`)
+
+Started from `supabase-auth` at `f920d71` (PR #4, open), so this branch stacks on the sign-in work. Not committed.
+
+### Changes
+- **Migration 0005:**
+  - New tables:
+    - `meal_schedules`: one row per user and meal (lunch or dinner) with enabled, window, time zone, active days, a 1–4 price ceiling or NULL, and version.
+    - `saved_anchors`: optional Home/Work points.
+  - Sessions are unique on `(user_id, meal_window_key)` and gain `schedule_version`, `anchor_source`, and `candidate_queue`.
+  - `dining_contexts` is dropped.
+  - **Data:**
+    - Each user's newest enabled lunch or dinner context becomes that meal's schedule row; brunch contexts are dropped.
+    - Duplicate sessions for one window keep only the earliest.
+    - Existing sessions get `anchor_source = 'legacy_context'`.
+    - Downgrade rebuilds one context per user and meal type.
+  - Both directions were exercised with sample rows on the test database.
+- **API:**
+  - Replaced:
+    - `/v1/contexts` → `GET`/`PUT /v1/me/meal-schedule`, a full replacement in which an identical PUT changes nothing, including the version.
+    - Onboarding endpoints → `GET /v1/me/anchors`, `PUT /v1/me/anchors/{home|work}`, and `DELETE /v1/me/anchors/{home|work}`.
+    - Route count 16 → 15.
+  - Enabled meals that share a day may not overlap (`422`, field `meals`), so at most one window is open at a time.
+  - `app/contexts/validation.py` moved to `app/schedules/validation.py` and lost `brunch`.
+- **Sessions:**
+  - `POST /v1/suggestion-sessions` takes `meal_window_key` plus exactly one of:
+    - `location`: transient, never logged or stored;
+    - `anchor`: `home` or `work`. An unset spot returns `422 anchor_not_set`.
+  - Creation locks the user's `meal_schedules` row instead of the context row.
+  - Candidates are ranked once at creation within a fixed 1,600 m walking radius (`WALKING_RADIUS_METERS`; `policy_v1` replaces it) and kept in `candidate_queue`. Another advances through the queue, so the anchor point is not needed again (D022).
+  - A test checks the queue order equals generating one Another at a time.
+  - The queue holds distances, so it is emptied when the session closes and when the user opens a newer meal window.
+- **Been here already (D025):**
+  - Pulled forward from item 4, because the context-scoped onboarding classification went with contexts.
+  - It is a `been_here` proposal response. It upserts the place as visited with `source = been_here` and `was_visited_before_nosh = TRUE`, then advances like Another.
+  - It is stored as its own response and replays like Another.
+- **Mobile:**
+  - New `app/(app)/schedule.tsx` survey:
+    - lunch on, weekdays, 11:30–13:30, `$$`;
+    - dinner off, 17:30–20:30, `$$$`;
+    - day chips;
+    - a `$`–`$$$$`/Any ceiling;
+    - also reached from Settings.
+  - Pure form logic with tests lives in `src/utils/scheduleForm.ts`.
+  - The home screen picks the open enabled meal with `openMealWindow` and shows a Been here already link under the actions.
+  - The context and onboarding screens were removed.
+  - Sessions are anchored at `PLACEHOLDER_LOCATION` (SF Mission, where the fixtures are) until step 5 adds `expo-location`.
+- **Expo patch updates:** `npx expo install --check` started failing after Expo published SDK 58 patch releases (expo 58.0.19, expo-router 58.0.26, and six others). These are within SDK 58 (D019) and were applied with `expo install --fix`. `npm audit` fell from 53 to 5 findings, all high, in `@expo/cli` → `node-forge` and `zod`.
+
+### Verification (actual results)
+- **API:**
+  - ruff lint and format are clean; strict mypy is clean (43 files).
+  - 163 unit tests pass.
+  - 51 integration tests pass on port 5433, including the migration round trip and 6 concurrency tests.
+  - `alembic check` reports no drift.
+  - Root spike: 12 passed.
+- **Development database:** upgraded 0004 → 0005. It had 1 context, which became 1 schedule row, and no sessions.
+- **Mobile:**
+  - `npm ci`, typecheck, and ESLint are clean.
+  - Jest: 70 passed in 5 suites.
+  - `expo install --check` is up to date; Expo Doctor passes 20/20.
+- **Not verified:** a walkthrough on a simulator or device.
+
+### Open items
+- The price ceiling is stored but not applied; fixtures have no price level. `policy_v1` (item 4) enforces it.
+- There is no Home/Work setup screen yet; the API is ready, and the screen arrives with location in item 5.
+- Legacy sessions that were still active have an empty queue, so their next Another ends as `exhausted`.
+
 ## 2026-10-21 — Supabase passwordless sign-in (Milestone 3 item 2, branch `supabase-auth`)
 
 Started from `main` at `e1d16ca` (PR #3, Expo SDK 58, merged).

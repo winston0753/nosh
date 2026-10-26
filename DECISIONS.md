@@ -211,7 +211,7 @@ The production policy will initially learn more slowly than the toy simulator. R
 
 ## D012 — Defer the API hosting vendor
 
-- **Status:** Deferred
+- **Status:** Resolved by D030 (2026-10-26)
 - **Date:** 2026-10-12
 
 ### Decision
@@ -302,7 +302,7 @@ Late-night dining contexts cannot be configured until a decision defines how an 
 
 ## D017 — Foreground location at use time, saved anchor as fallback
 
-- **Status:** Accepted; amended by D020 (2026-10-20) — the fallback anchors are optional Home/Work spots, not dining-context points
+- **Status:** Accepted; amended by D020 (2026-10-20) — the fallback anchors are optional Home/Work spots, not dining-context points. The API contract (a transient `location` on session creation) is implemented (2026-10-25); the app requests the device location in Milestone 3 step 5
 - **Date:** 2026-10-16
 
 ### Decision
@@ -320,7 +320,7 @@ The use-time coordinate is transient request input: it must never be logged, mus
 
 ## D018 — Onboarding classifications have their own endpoint
 
-- **Status:** Accepted; amended by D025 (2026-10-20) — the provenance rule stands, recorded from the suggestion card
+- **Status:** Accepted; amended by D025 (2026-10-20) — the provenance rule stands, recorded from the suggestion card. The context-scoped onboarding endpoint below was removed with dining contexts (migration 0005, 2026-10-25); Been here already now records `source = been_here`
 - **Date:** 2026-10-16
 
 ### Decision
@@ -357,7 +357,7 @@ New dependencies are installed once against the final SDK. Expo Router, React Na
 
 ## D020 — Current location first; a meal schedule replaces dining contexts
 
-- **Status:** Accepted (not yet implemented)
+- **Status:** Implemented (2026-10-25, migration 0005) — server, schedule survey, and Home/Work API; the app requests the device location in Milestone 3 step 5 and anchors at a placeholder point until then
 - **Date:** 2026-10-20
 
 ### Decision
@@ -397,7 +397,7 @@ D007's Apple Maps handoff is superseded; the phase-one rule "Maps-only handoff, 
 
 ## D022 — Persist only provider IDs and Nosh-owned data
 
-- **Status:** Accepted (not yet implemented)
+- **Status:** Partially implemented (2026-10-25) — sessions rank candidates once and store the queue; `places` still holds fixture names and addresses until the Google provider lands
 - **Date:** 2026-10-20
 
 ### Decision
@@ -411,7 +411,7 @@ The database stores the Google `place_id` (storable indefinitely) and Nosh-owned
 
 ### Consequences
 
-PRODUCT principle 6 narrows to "reconstructable from stored IDs, ranks, Nosh-owned components, and policy version." Recommendation replay cannot reproduce provider inputs that have since changed. The offline edge case "cache the current card" narrows to IDs and queued writes. History screens resolve names live. Cuisine learning needs a per-visit cuisine label that is Nosh- or user-owned; how it is captured is an open question to settle before `policy_v1` is implemented.
+PRODUCT principle 6 narrows to "reconstructable from stored IDs, ranks, Nosh-owned components, and policy version." Recommendation replay cannot reproduce provider inputs that have since changed. Because a queue of place IDs with distances can reveal where the user was, a session's queue is emptied when it closes and when the user opens a session for a newer meal window. The offline edge case "cache the current card" narrows to IDs and queued writes. History screens resolve names live. Cuisine learning needs a per-visit cuisine label that is Nosh- or user-owned; how it is captured is an open question to settle before `policy_v1` is implemented.
 
 ## D023 — Notifications are location-free nudges
 
@@ -458,7 +458,7 @@ Weights and the chain list are versioned with the policy. RECOMMENDATIONS.md doc
 
 ## D025 — "Been here already" on the card replaces bulk onboarding classification
 
-- **Status:** Accepted (not yet implemented)
+- **Status:** Implemented (2026-10-25) — a `been_here` proposal response
 - **Date:** 2026-10-20
 
 ### Decision
@@ -475,7 +475,7 @@ The context-scoped onboarding endpoints are replaced. Another becomes a cleaner 
 
 ## D026 — Lunch budget is a per-meal price ceiling
 
-- **Status:** Accepted (not yet implemented)
+- **Status:** Partially implemented (2026-10-25) — the survey collects a 1–4 ceiling per meal and the API stores it; `policy_v1` enforces it
 - **Date:** 2026-10-20
 
 ### Decision
@@ -511,3 +511,34 @@ Target about $50/month: Supabase Pro (~$25; the free tier pauses idle projects),
 ### Consequences
 
 Google Cloud quotas and billing alerts must be set so usage cannot exceed the free caps unnoticed. A larger cohort requires revisiting this decision.
+
+## D029 — Bundle identifier `com.winstontang.nosh`
+
+- **Status:** Accepted (applied to `app.json` in Milestone 3 step 7)
+- **Date:** 2026-10-26
+
+### Decision
+
+The iOS bundle identifier is `com.winstontang.nosh`, using the developer's name as the namespace because no domain is owned. It replaces the placeholder `com.nosh.app`.
+
+### Consequences
+
+The identifier is permanent once the App Store Connect app record exists. The Google Maps SDK for iOS key is already restricted to it.
+
+## D030 — Host the API on Fly.io with Supabase Postgres
+
+- **Status:** Accepted (not yet deployed; Milestone 3 step 7)
+- **Date:** 2026-10-26
+
+### Decision
+
+Run the FastAPI container on a small Fly.io machine (about $2–5/month). The production database is the Supabase project's Postgres with the PostGIS extension enabled, so there is no second database bill. Connect through Supabase's direct or session connection, not the transaction pooler, which breaks asyncpg prepared statements. Run `alembic upgrade head` as a release step.
+
+### Alternatives rejected
+
+- **Render ($7/month starter):** simpler dashboard, slightly higher cost, no other advantage.
+- **Railway with its own Postgres:** a second database bill and extra PostGIS setup.
+
+### Consequences
+
+D012's container-first rule stands: no Fly-specific service becomes a core dependency. The Google server key can be IP-restricted once the Fly machine has a static egress address.

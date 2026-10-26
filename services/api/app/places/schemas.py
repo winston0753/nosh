@@ -23,13 +23,6 @@ class PlaceResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class OnboardingPlaceResponse(BaseModel):
-    place: PlaceResponse
-    distance_meters: float
-    primary_cuisine: str | None
-    state: Literal["unknown", "visited", "not_interested"]
-
-
 class PlaceStateRequest(BaseModel):
     state: Literal["visited", "not_interested", "unknown"]
 

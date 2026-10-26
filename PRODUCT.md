@@ -91,7 +91,7 @@ Phase one is not designed for restaurants, delivery couriers, large social group
 
 ### F2. Meal schedule and location (D020)
 
-> Implementation status: the current code still uses dining contexts (a fixed map point, radius, and schedule per context). D020 replaces them.
+> Implementation status (2026-10-25): the meal schedule, price ceiling, and Home/Work API are implemented. The app does not yet request the device location or offer Home/Work setup; it anchors suggestions at a placeholder point until Milestone 3 step 5.
 
 - An onboarding survey sets the meal schedule: weekday lunch by default, dinner opt-in, active days, local window, and IANA time zone.
 - The local time window must end after it starts on the same day; overnight windows are not supported in phase one (D016).
@@ -101,7 +101,7 @@ Phase one is not designed for restaurants, delivery couriers, large social group
 
 ### F3. Prior visit history (D025)
 
-> Implementation status: the current code has a bulk onboarding classification step (D018). D025 replaces it.
+> Implementation status (2026-10-25): Been here already is implemented on the card; the bulk onboarding classification step was removed.
 
 - The suggestion card offers a secondary Been here already action.
 - A place marked Been here already was visited before Nosh: it is excluded from future suggestions and never counts toward the North Star, even after a later Nosh visit (D018).

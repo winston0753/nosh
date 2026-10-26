@@ -1,35 +1,52 @@
 // Hand-maintained types matching the FastAPI OpenAPI schema.
 // When the API changes, update these in the same PR.
 
-export interface ContextCreate {
-  name: string;
-  meal_type: 'lunch' | 'dinner' | 'brunch';
-  longitude: number;
-  latitude: number;
-  radius_meters?: number;
+export type MealType = 'lunch' | 'dinner';
+
+/** One meal of the schedule as sent to PUT /v1/me/meal-schedule. */
+export interface MealPlanInput {
+  meal_type: MealType;
+  enabled: boolean;
   local_window_start: string; // HH:MM
-  local_window_end: string;   // HH:MM
-  time_zone: string;
-  active_days?: number[];
+  local_window_end: string; // HH:MM
+  active_days: number[]; // 0=Mon … 6=Sun
+  price_ceiling: PriceCeiling | null; // null = no limit
   notifications_enabled?: boolean;
 }
 
-export interface Context {
-  id: string;
-  name: string;
-  meal_type: 'lunch' | 'dinner' | 'brunch';
-  longitude: number;
-  latitude: number;
-  radius_meters: number;
-  local_window_start: string;
-  local_window_end: string;
-  time_zone: string;
-  active_days: number[];
-  notifications_enabled: boolean;
-  version: number;
-  disabled_at: string | null;
-  created_at: string;
+/** 1 ($) to 4 ($$$$). */
+export type PriceCeiling = 1 | 2 | 3 | 4;
+
+export interface MealScheduleUpdate {
+  time_zone: string; // IANA
+  meals: MealPlanInput[];
 }
+
+export interface MealPlan extends Required<MealPlanInput> {
+  time_zone: string;
+  version: number;
+  updated_at: string;
+}
+
+/** `meals` is empty until the user finishes the schedule survey. */
+export interface MealSchedule {
+  meals: MealPlan[];
+}
+
+export type AnchorKind = 'home' | 'work';
+
+export interface Coordinate {
+  latitude: number;
+  longitude: number;
+}
+
+export interface Anchor extends Coordinate {
+  kind: AnchorKind;
+  updated_at: string;
+}
+
+/** Where a new session is centred: the device location or a saved spot. */
+export type SessionAnchor = { location: Coordinate } | { anchor: AnchorKind };
 
 export interface Proposal {
   id: string;
@@ -46,15 +63,16 @@ export interface Proposal {
 
 export interface Session {
   id: string;
-  dining_context_id: string;
   meal_window_key: string;
+  anchor_source: string; // device, home, work (legacy_context for migrated sessions)
   state: 'active' | 'accepted' | 'skipped' | 'exhausted' | 'no_candidates';
   policy_version: string;
   current_proposal: Proposal | null;
   created_at: string;
 }
 
-export type ResponseAction = 'go' | 'another' | 'not_today';
+/** Go / Another / Not today, plus the card's secondary Been here already (D025). */
+export type ResponseAction = 'go' | 'another' | 'not_today' | 'been_here';
 
 export interface ResponseResult {
   response: ResponseAction;
@@ -89,24 +107,12 @@ export interface Progress {
   total_confirmed_count: number;
 }
 
-export interface OnboardingPlace {
-  place: {
-    id: string;
-    canonical_name: string;
-    address: string | null;
-    status: string;
-  };
-  distance_meters: number;
-  primary_cuisine: string | null;
-  state: 'unknown' | 'visited' | 'not_interested';
-}
-
 export type PlaceStateValue = 'visited' | 'not_interested' | 'unknown';
 
 export interface PlaceState {
   place_id: string;
   state: PlaceStateValue;
-  source: 'onboarding' | 'confirmation' | 'manual' | 'import';
+  source: 'onboarding' | 'been_here' | 'confirmation' | 'manual' | 'import';
   was_visited_before_nosh: boolean;
 }
 

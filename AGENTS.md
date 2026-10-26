@@ -24,9 +24,11 @@ Read these before changing code:
 
 Root documents are canonical. Files under `docs/` are historical research.
 
-## Current state (as of 2026-10-20)
+## Current state (as of 2026-10-26)
 
-Checkpoint: **Milestone 0.1 — Working Local Foundation**, merged to `main` via PR #1, plus a correctness-hardening pass (branch `milestone-0.1-correctness-hardening`; see `notes.md` 2026-10-16). The local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. This is suitable for source control; it is **not** ready for TestFlight or external testers.
+Start with "Where the last session left off" in `IMPLEMENTATION_HANDOFF.md`. It covers open PRs, outside-account setup, local configuration, and the next decision to ask about.
+
+Checkpoint: **Milestone 0.1 — Working Local Foundation** (PR #1), the correctness-hardening pass (PR #2), Expo SDK 58 (PRs #3 and #5), and Supabase email sign-in (PR #4), all merged to `main`; the meal schedule (step 3) is in its own PR. The local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. This is suitable for source control; it is **not** ready for TestFlight or external testers.
 
 | Milestone | Status |
 |---|---|
@@ -37,31 +39,31 @@ Checkpoint: **Milestone 0.1 — Working Local Foundation**, merged to `main` via
 
 **Do not recreate the backend, database, migrations, API, or Expo foundation.** Extend what exists.
 
-- **Backend:** FastAPI modular monolith in `services/api/` (own uv project, `nosh-api`), SQLAlchemy 2 async + asyncpg, Alembic migrations `0001`–`0004`, `/health/live`, `/health/ready`, OpenAPI, deterministic `policy_v0` engine, suggestion sessions with Go / Another / Not today, visit confirmation, rating, correction, history, progress, and product-data deletion.
+- **Backend:** FastAPI modular monolith in `services/api/` (own uv project, `nosh-api`), SQLAlchemy 2 async + asyncpg, Alembic migrations `0001`–`0005`, `/health/live`, `/health/ready`, OpenAPI, deterministic `policy_v0` engine, per-user meal schedule and Home/Work anchors, suggestion sessions keyed by user and meal window with Go / Another / Not today / Been here already, visit confirmation, rating, correction, history, progress, and product-data deletion.
 - **Database:** Docker Compose PostGIS 16-3.4. `db` (port 5432, `nosh_dev`) is persistent development data; `db_test` (port 5433, `nosh_test`, `--profile test`) is disposable. pgvector is intentionally absent (D013).
-- **Mobile:** Expo SDK 58 app in `apps/mobile/` with Expo Router `~58.0.24`, React Native 0.88, React 19.3, strict TypeScript, TanStack Query, and (currently) Apple Maps handoff (D019). Do not upgrade or downgrade Expo, React Native, or Expo Router without a recorded decision.
+- **Mobile:** Expo SDK 58 app in `apps/mobile/` with Expo Router `~58.0.26`, React Native 0.88, React 19.3, strict TypeScript, TanStack Query, and (currently) Apple Maps handoff (D019). Do not upgrade or downgrade Expo, React Native, or Expo Router without a recorded decision.
 - **Jobs:** batch jobs live in `services/api/jobs/` and import the app as `app`; run from `services/api` with `uv run --frozen python -m jobs.ingest_places.importer`.
-- **Contracts added by the hardening pass:** onboarding classification via `PUT /v1/contexts/{context_id}/onboarding-places/{place_id}/state` (D018); strict context/meal-window validation with `422 validation_error` (D016); atomic `user_place_states` upserts; replay-equivalent responses; `(visited_at, id)` visit pagination.
-- **Tests:** 12 root spike tests, 148 API unit tests, 46 PostgreSQL integration tests (including 6 genuine concurrent-database tests), and 58 mobile Jest tests.
+- **Contracts:** `GET`/`PUT /v1/me/meal-schedule` (full replacement), `/v1/me/anchors/{home|work}`, and `POST /v1/suggestion-sessions` with a transient `location` or saved `anchor` (D020); Been here already as a proposal response with D018 provenance (D025); strict schedule/meal-window validation with `422 validation_error` (D016); atomic `user_place_states` upserts; replay-equivalent responses; `(visited_at, id)` visit pagination.
+- **Tests:** 12 root spike tests, 163 API unit tests, 51 PostgreSQL integration tests (including 6 genuine concurrent-database tests), and 70 mobile Jest tests.
 
 ## Direction change (2026-10-20)
 
-Decisions D019–D028 (evidence: `docs/research/2026-10-20-place-data-and-map-terms.md`) are accepted. D019 (Expo SDK 58) is implemented; D020–D028 are **not yet implemented**, and the code still reflects the earlier design:
+Decisions D019–D028 (evidence: `docs/research/2026-10-20-place-data-and-map-terms.md`) are accepted. D019 (Expo SDK 58) is implemented; D020 (meal schedule), D025 (Been here already), and the D026 price-ceiling setting are implemented on the server and in the app, except the app's current location; the rest is **not yet implemented**:
 
-- **Current location first (D020):** a per-user meal schedule (weekday lunch default, dinner opt-in) and optional Home/Work fallback spots replace dining contexts.
+- **Current location first (D020):** a per-user meal schedule (weekday lunch default, dinner opt-in) and optional Home/Work fallback spots replaced dining contexts. The app still anchors sessions at a placeholder SF Mission point until step 5.
 - **Google Places end to end (D021):** live candidates and ranking signals; Google map and attribution on the card; Go opens Google Maps. Never combine Google-selected places with Apple Maps data, maps, or handoff.
 - **Store only IDs (D022):** persist the Google `place_id` and Nosh-owned data; never store, log, or cache provider names, addresses, ratings, hours, types, or values derived from them.
 - **Notifications are location-free nudges (D023);** `policy_v1` ranking (D024); Been here already on the card (D025); per-meal price ceiling (D026); curated-catalog plan retired (D027); ~$50/month budget (D028).
 
 ## Next: complete Milestone 3
 
-The correctness-hardening pass and these decisions were merged to `main` via PR #2. Next, in order (see `IMPLEMENTATION_HANDOFF.md`):
+The bundle identifier (`com.winstontang.nosh`, D029) and API hosting (Fly.io with Supabase Postgres, D030) are decided. Next, in order (see `IMPLEMENTATION_HANDOFF.md`):
 
 1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21.
 2. ~~Supabase passwordless email authentication~~ — done 2026-10-21 (email one-time code; `AuthProvider` with per-user query keys and cache clearing; local-dev UUID mode kept when Supabase is not configured).
-3. Meal schedule, price ceiling, and fallback spots replace dining contexts (D020, D026); context creation currently hardcodes the SF Mission coordinate, 1,600 m, and every day.
-4. Place-provider abstraction (Google + test fixtures), `policy_v1`, and Been here already (D021, D022, D024, D025).
-5. Mobile current-location flow with a Google map and Google Maps handoff.
+3. ~~Meal schedule, price ceiling, and fallback spots replace dining contexts (D020, D026)~~ — done 2026-10-25 (migration 0005; Been here already (D025) included).
+4. Place-provider abstraction (Google + test fixtures) and `policy_v1`, including the price-ceiling filter (D021, D022, D024, D026).
+5. Mobile current-location flow (replacing the placeholder point), Home/Work setup, a Google map, and Google Maps handoff.
 6. Persist session/proposal IDs and queue idempotent writes for transient network failures.
 7. EAS development/TestFlight build, real bundle identifier, and real icons (currently 1×1 placeholders).
 

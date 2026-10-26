@@ -22,8 +22,9 @@ async def create_or_get_session(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> schemas.SessionResponse:
+    location = (body.location.longitude, body.location.latitude) if body.location else None
     session = await service.get_or_create_session(
-        db, current_user, body.dining_context_id, body.meal_window_key
+        db, current_user, body.meal_window_key, location=location, anchor=body.anchor
     )
     result = await service.session_to_response(db, session)
     return result  # type: ignore[return-value]

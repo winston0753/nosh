@@ -14,11 +14,10 @@ export default function AppLayout() {
   return (
     <Stack>
       <Stack.Screen name="index" options={{ title: 'Nosh' }} />
-      <Stack.Screen name="onboarding" options={{ title: 'Places near you' }} />
       <Stack.Screen name="history" options={{ title: 'History' }} />
       <Stack.Screen name="progress" options={{ title: 'Progress' }} />
       <Stack.Screen name="settings" options={{ title: 'Settings' }} />
-      <Stack.Screen name="contexts/new" options={{ title: 'New context' }} />
+      <Stack.Screen name="schedule" options={{ title: 'Meal times' }} />
     </Stack>
   );
 }

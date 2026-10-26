@@ -4,15 +4,35 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+class Coordinate(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
 
 
 class SessionCreateRequest(BaseModel):
-    dining_context_id: uuid.UUID
+    """Open (or fetch) the session for one meal window.
+
+    Give exactly one anchor: ``location`` (the device's foreground location,
+    transient: never logged or stored) or ``anchor`` (a saved Home/Work spot,
+    used when location is unavailable).  Once a session exists, later requests
+    for the same window return it unchanged whatever anchor they give.
+    """
+
     meal_window_key: str = Field(
-        description="YYYY-MM-DD#meal_type, e.g. 2026-10-12#dinner",
-        pattern=r"^\d{4}-\d{2}-\d{2}#(lunch|dinner|brunch)$",
+        description="YYYY-MM-DD#meal_type, e.g. 2026-10-12#lunch",
+        pattern=r"^\d{4}-\d{2}-\d{2}#(lunch|dinner)$",
     )
+    location: Coordinate | None = None
+    anchor: Literal["home", "work"] | None = None
+
+    @model_validator(mode="after")
+    def _one_anchor(self) -> SessionCreateRequest:
+        if (self.location is None) == (self.anchor is None):
+            raise ValueError("give exactly one of location or anchor")
+        return self
 
 
 class ProposalResponse_Schema(BaseModel):
@@ -32,8 +52,9 @@ class ProposalResponse_Schema(BaseModel):
 
 class SessionResponse(BaseModel):
     id: uuid.UUID
-    dining_context_id: uuid.UUID
     meal_window_key: str
+    # device, home, or work (legacy_context for sessions migrated from contexts)
+    anchor_source: str
     state: str
     policy_version: str
     current_proposal: ProposalResponse_Schema | None
@@ -41,7 +62,7 @@ class SessionResponse(BaseModel):
 
 
 class ResponseRequest(BaseModel):
-    response: Literal["go", "another", "not_today"]
+    response: Literal["go", "another", "not_today", "been_here"]
     client_event_id: str = Field(min_length=1, max_length=255)
 
 

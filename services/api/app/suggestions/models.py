@@ -3,7 +3,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,13 +24,21 @@ class SuggestionSession(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    dining_context_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("dining_contexts.id", ondelete="CASCADE"), nullable=False
-    )
-    context_version: Mapped[int] = mapped_column(Integer, nullable=False)
     meal_window_key: Mapped[str] = mapped_column(String(50), nullable=False)  # YYYY-MM-DD#meal_type
+    # Version of the user's meal_schedules row for this meal when the session began.
+    schedule_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Where the session was anchored: device (foreground location), home, or
+    # work; legacy_context for sessions migrated from dining contexts.
+    # The coordinate itself is never stored on the session (D017).
+    anchor_source: Mapped[str] = mapped_column(String(20), nullable=False)
     state: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
     policy_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Ranked candidates not yet proposed, computed once at creation (D022).
+    # Another and Been here already take the next entry, so the anchor point
+    # is never needed again.  Emptied when the session closes.
+    candidate_queue: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -29,7 +46,11 @@ class SuggestionSession(Base):
 
     proposals: Mapped[list[Proposal]] = relationship("Proposal", back_populates="session")
 
-    __table_args__ = (UniqueConstraint("dining_context_id", "meal_window_key"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "meal_window_key", name="uq_suggestion_sessions_user_meal_window"
+        ),
+    )
 
 
 class Proposal(Base):
@@ -74,7 +95,8 @@ class ProposalResponse(Base):
         UUID(as_uuid=True), ForeignKey("proposals.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    response: Mapped[str] = mapped_column(String(50), nullable=False)  # go/another/not_today
+    # go/another/not_today/been_here
+    response: Mapped[str] = mapped_column(String(50), nullable=False)
     client_event_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     responded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

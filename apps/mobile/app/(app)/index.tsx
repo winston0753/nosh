@@ -2,11 +2,13 @@
  * Main suggestion-card screen.
  *
  * Flow:
- * 1. Load existing contexts.
- * 2. If none, prompt to create one.
- * 3. Derive the meal-window key from the active context's time zone and meal type.
- * 4. Create/get the suggestion session for that key.
- * 5. Display the current proposal with Go / Another / Not today actions.
+ * 1. Load the user's meal schedule.
+ * 2. If it is empty, prompt for the schedule survey.
+ * 3. Find the enabled meal whose window is open now and derive its key.
+ * 4. Create/get the suggestion session for that key, anchored at the user's
+ *    location (see PLACEHOLDER_LOCATION).
+ * 5. Display the current proposal with Go / Another / Not today, plus the
+ *    secondary Been here already.
  *
  * Idempotency: the client_event_id is derived from (proposal_id, action) and
  * is therefore stable across network retries for the same user action.
@@ -31,31 +33,36 @@ import ResponseButtons from '../../src/components/ResponseButtons';
 import SuggestionCard from '../../src/components/SuggestionCard';
 import { userKey } from '../../src/auth/queryKeys';
 import { useAuth } from '../../src/hooks/useAuth';
-import { mealWindowKey } from '../../src/utils/mealWindowKey';
+import { openMealWindow } from '../../src/utils/mealWindowKey';
+
+// Until the current-location step adds expo-location (Milestone 3 step 5),
+// every session is anchored in San Francisco's Mission District, where the
+// fixture places are.  Never log this or a real device coordinate.
+const PLACEHOLDER_LOCATION = { latitude: 37.759, longitude: -122.419 };
+
+const MEAL_NAMES = { lunch: 'Lunch', dinner: 'Dinner' } as const;
 
 export default function SuggestionScreen() {
   const { client, userId } = useAuth();
   const qc = useQueryClient();
   const [respondingAction, setRespondingAction] = useState<ResponseAction | null>(null);
 
-  const { data: contexts, isLoading: contextsLoading } = useQuery({
-    queryKey: userKey(userId, 'contexts'),
-    queryFn: () => client!.listContexts(),
+  const { data: schedule, isLoading: scheduleLoading } = useQuery({
+    queryKey: userKey(userId, 'schedule'),
+    queryFn: () => client!.getMealSchedule(),
     enabled: !!client,
   });
 
-  const activeContext = contexts?.find((c) => !c.disabled_at) ?? null;
-
-  // Derive the window key from the context's configured time zone and meal type.
-  // Returns null when the context's active window is not currently open.
-  // Do NOT create a session when windowKey is null — that would create a
-  // session for a window key like "2026-10-12#dinner" when today is inactive.
-  const windowKey: string | null = activeContext ? mealWindowKey(activeContext) : null;
+  // The enabled meal whose window is open now, with its key.  Do NOT create a
+  // session when this is null — that would create a session for a window key
+  // like "2026-10-12#dinner" outside the window or on an inactive day.
+  const open = schedule ? openMealWindow(schedule.meals) : null;
+  const windowKey = open?.key ?? null;
 
   const { data: session, isLoading: sessionLoading } = useQuery({
-    queryKey: userKey(userId, 'session', activeContext?.id, windowKey),
-    queryFn: () => client!.createOrGetSession(activeContext!.id, windowKey!),
-    enabled: !!client && !!activeContext && windowKey !== null,
+    queryKey: userKey(userId, 'session', windowKey),
+    queryFn: () => client!.createOrGetSession(windowKey!, { location: PLACEHOLDER_LOCATION }),
+    enabled: !!client && windowKey !== null,
   });
 
   const respondMutation = useMutation({
@@ -113,7 +120,7 @@ export default function SuggestionScreen() {
     [respondMutation],
   );
 
-  if (contextsLoading || sessionLoading) {
+  if (scheduleLoading || sessionLoading) {
     return (
       <SafeAreaView style={styles.center}>
         <Text style={styles.loadingText}>Loading…</Text>
@@ -121,27 +128,33 @@ export default function SuggestionScreen() {
     );
   }
 
-  if (!activeContext) {
+  if (!schedule?.meals.length) {
     return (
       <SafeAreaView style={styles.center}>
-        <Text style={styles.emptyTitle}>No dining context yet</Text>
-        <Text style={styles.emptyBody}>Create one to get your first suggestion.</Text>
-        <TouchableOpacity style={styles.btn} onPress={() => router.push('/(app)/contexts/new')}>
-          <Text style={styles.btnText}>Set up a context</Text>
+        <Text style={styles.emptyTitle}>When do you eat out?</Text>
+        <Text style={styles.emptyBody}>Set your meal times to get your first suggestion.</Text>
+        <TouchableOpacity style={styles.btn} onPress={() => router.push('/(app)/schedule')}>
+          <Text style={styles.btnText}>Set meal times</Text>
         </TouchableOpacity>
       </SafeAreaView>
     );
   }
 
-  // No active meal window right now: either the time is outside the configured
-  // window or today is not one of the context's active days.
-  if (windowKey === null) {
+  // No meal window open right now: outside every enabled window, or today is
+  // not one of their active days.
+  if (open === null) {
+    const enabled = schedule.meals.filter((m) => m.enabled);
     return (
       <SafeAreaView style={styles.center}>
-        <Text style={styles.emptyTitle}>No active meal window</Text>
-        <Text style={styles.emptyBody}>
-          {activeContext.name} opens at {activeContext.local_window_start}.
-        </Text>
+        <Text style={styles.emptyTitle}>No meal window open</Text>
+        {enabled.map((m) => (
+          <Text key={m.meal_type} style={styles.emptyBody}>
+            {MEAL_NAMES[m.meal_type]}: {m.local_window_start}–{m.local_window_end}
+          </Text>
+        ))}
+        <TouchableOpacity onPress={() => router.push('/(app)/settings')}>
+          <Text style={styles.settingsLink}>Settings</Text>
+        </TouchableOpacity>
       </SafeAreaView>
     );
   }
@@ -163,7 +176,7 @@ export default function SuggestionScreen() {
       <SafeAreaView style={styles.center}>
         <Text style={styles.emptyTitle}>{title}</Text>
         {(state === 'exhausted' || state === 'no_candidates') && (
-          <Text style={styles.emptyBody}>Try widening your radius in Settings.</Text>
+          <Text style={styles.emptyBody}>Nothing else nearby fits right now.</Text>
         )}
       </SafeAreaView>
     );
@@ -175,7 +188,7 @@ export default function SuggestionScreen() {
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.header}>
-          <Text style={styles.contextName}>{activeContext.name}</Text>
+          <Text style={styles.mealName}>{MEAL_NAMES[open.meal.meal_type]}</Text>
           <TouchableOpacity onPress={() => router.push('/(app)/settings')}>
             <Text style={styles.settingsLink}>Settings</Text>
           </TouchableOpacity>
@@ -189,6 +202,14 @@ export default function SuggestionScreen() {
             loading={respondMutation.isPending}
             disabled={!!respondingAction}
           />
+          <TouchableOpacity
+            onPress={() => handleResponse('been_here')}
+            disabled={!!respondingAction}
+            accessibilityRole="button"
+            accessibilityHint="Skips this place now and in future suggestions"
+          >
+            <Text style={styles.beenHere}>Been here already</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.navRow}>
@@ -209,9 +230,10 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 16 },
   scroll: { padding: 24, gap: 24 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  contextName: { fontSize: 18, fontWeight: '600', color: '#111' },
+  mealName: { fontSize: 18, fontWeight: '600', color: '#111' },
   settingsLink: { fontSize: 15, color: '#888' },
   actions: { gap: 12 },
+  beenHere: { fontSize: 15, color: '#666', textAlign: 'center', paddingVertical: 4 },
   navRow: { flexDirection: 'row', justifyContent: 'space-around', paddingTop: 8 },
   navLink: { fontSize: 15, color: '#555' },
   loadingText: { fontSize: 16, color: '#888' },
