@@ -2,7 +2,8 @@
  * Typed API client wrapping fetch against the Nosh FastAPI backend.
  *
  * Auth: in local dev, the auth token is the user's UUID string.
- * In production, it is a Supabase JWT.
+ * In production, it is the current Supabase access token, read from the
+ * token provider on every request so refreshed tokens are always used.
  */
 
 import type {
@@ -23,22 +24,28 @@ import type {
 // globals.d.ts declares the minimal process.env type.
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
 
-export class NoshClient {
-  private token: string;
+export type TokenProvider = () => Promise<string | null>;
 
-  constructor(token: string) {
-    this.token = token;
+export class NoshClient {
+  private getToken: TokenProvider;
+
+  constructor(token: string | TokenProvider) {
+    this.getToken = typeof token === 'string' ? () => Promise.resolve(token) : token;
   }
 
   private async request<T>(
     path: string,
     options: RequestInit = {},
   ): Promise<T> {
+    const token = await this.getToken();
+    if (!token) {
+      throw Object.assign(new Error('Not signed in'), { code: 'unauthenticated', status: 401 });
+    }
     const res = await fetch(`${BASE_URL}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${token}`,
         ...(options.headers ?? {}),
       },
     });

@@ -1,5 +1,33 @@
 # Project Notes
 
+## 2026-10-21 — Supabase passwordless sign-in (Milestone 3 item 2, branch `supabase-auth`)
+
+Started from `main` at `e1d16ca` (PR #3, Expo SDK 58, merged).
+
+### Changes
+- **One session owner:** `src/auth/AuthProvider.tsx` replaces the old `useAuth` hook, which created separate auth state in every screen that called it. `src/hooks/useAuth.ts` re-exports `useAuth`, so screen imports are unchanged.
+- **Sign-in:** an email one-time code (`signInWithOtp` then `verifyOtp` type `email`). A code works when the email is opened on another device (a PRODUCT.md edge case); a magic link would also have needed deep-link handling. Local-dev UUID mode remains when no Supabase URL and key are configured (`src/auth/config.ts` rejects a half-set configuration or a non-https URL).
+- **Session storage:** `src/auth/secureStorage.ts` stores the session in the Keychain, split into 1,800-character chunks (`<key>.0…`, count under `<key>.n`), because SecureStore warns above 2 KB per value. Supabase's own guide uses AES plus AsyncStorage instead; chunking keeps tokens in the Keychain with no extra dependencies. Tokens auto-refresh only while the app is in the foreground.
+- **API client:** `NoshClient` takes a token provider and reads the current access token on every request. With no token it fails with `unauthenticated` and sends nothing.
+- **Account isolation:** all query keys go through `userKey(userId, …)` (`src/auth/queryKeys.ts`). On any user change, in-flight queries are cancelled and the cache is cleared. Sign-out uses `scope: 'local'` so it works offline.
+- **Dependencies:** `@supabase/supabase-js` and `react-native-url-polyfill` (installed via `npx expo install`); a strict `npm ci` still works.
+- **Configuration:** new `apps/mobile/.env.example`. Local `apps/mobile/.env.local` and `services/api/.env` (`AUTH_LOCAL_DEV=false`, `SUPABASE_URL`, empty JWT secret) are git-ignored and were not committed. No API code changes.
+
+### Verification (actual results)
+- Supabase project `arrjixzbzumvxytlimpf`: the publishable key returns 200 from `/auth/v1/settings` (a bogus key returns 401); email sign-in is enabled with confirmation required; JWKS publishes an ES256 key.
+- API booted with the new `.env`: `/health/live` returned ok; a UUID bearer token and a forged ES256 token both returned 401.
+- Mobile: typecheck and ESLint clean; Jest 58 passed (4 suites; +6 storage, +9 provider/client). Removing `queryClient.clear()` makes exactly the 2 cache-isolation tests fail.
+- 2026-10-25: a real email-code round trip succeeded on a physical iPhone in Expo Go (API reached over the LAN with `--host 0.0.0.0`).
+
+### Dashboard setup (done 2026-10-25)
+- Supabase only allows editing email templates once custom SMTP is configured. Interim sender: Gmail SMTP with an app password (`smtp.gmail.com:465`). Before external testers, move to a domain sender (e.g. Resend).
+- **Magic Link** and **Confirm signup** templates now include `{{ .Token }}`.
+- The sign-in screen now distinguishes a network failure (supabase-js status 0) from a provider-side send failure and shows the provider message. Previously every non-429 failure said "check your connection", which hid an SMTP misconfiguration.
+
+### Open items
+- Replace the Gmail SMTP sender with a domain sender before testers arrive.
+- Pre-existing: API auth errors return FastAPI's `{"detail": …}` body rather than the documented `{"code", "message"}` envelope.
+
 ## 2026-10-21 — Expo SDK 53 → 58 (D019, branch `expo-sdk-58`)
 
 Started from `main` at `72bb0fb` (PR #2 merged, CI green including the new `alembic check` step). Not committed.

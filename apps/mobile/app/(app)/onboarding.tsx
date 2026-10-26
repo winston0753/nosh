@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import type { OnboardingPlace, PlaceStateValue as PlaceState } from '../../src/api/types';
+import { userKey } from '../../src/auth/queryKeys';
 import { useAuth } from '../../src/hooks/useAuth';
 
 const STATE_BUTTONS: { label: string; value: PlaceState; color: string }[] = [
@@ -65,11 +66,11 @@ function PlaceRow({
 
 export default function OnboardingScreen() {
   const { contextId } = useLocalSearchParams<{ contextId: string }>();
-  const { client } = useAuth();
+  const { client, userId } = useAuth();
   const qc = useQueryClient();
 
   const { data: places, isLoading } = useQuery({
-    queryKey: ['onboarding-places', contextId],
+    queryKey: userKey(userId, 'onboarding-places', contextId),
     queryFn: () => client!.getOnboardingPlaces(contextId!),
     enabled: !!client && !!contextId,
   });
@@ -80,7 +81,7 @@ export default function OnboardingScreen() {
     mutationFn: ({ placeId, state }: { placeId: string; state: PlaceState }) =>
       client!.classifyOnboardingPlace(contextId!, placeId, state),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['onboarding-places', contextId] });
+      qc.invalidateQueries({ queryKey: userKey(userId, 'onboarding-places', contextId) });
     },
   });
 

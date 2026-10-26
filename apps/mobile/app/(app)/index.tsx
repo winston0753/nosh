@@ -29,16 +29,17 @@ import {
 import type { ResponseAction } from '../../src/api/types';
 import ResponseButtons from '../../src/components/ResponseButtons';
 import SuggestionCard from '../../src/components/SuggestionCard';
+import { userKey } from '../../src/auth/queryKeys';
 import { useAuth } from '../../src/hooks/useAuth';
 import { mealWindowKey } from '../../src/utils/mealWindowKey';
 
 export default function SuggestionScreen() {
-  const { client } = useAuth();
+  const { client, userId } = useAuth();
   const qc = useQueryClient();
   const [respondingAction, setRespondingAction] = useState<ResponseAction | null>(null);
 
   const { data: contexts, isLoading: contextsLoading } = useQuery({
-    queryKey: ['contexts'],
+    queryKey: userKey(userId, 'contexts'),
     queryFn: () => client!.listContexts(),
     enabled: !!client,
   });
@@ -52,7 +53,7 @@ export default function SuggestionScreen() {
   const windowKey: string | null = activeContext ? mealWindowKey(activeContext) : null;
 
   const { data: session, isLoading: sessionLoading } = useQuery({
-    queryKey: ['session', activeContext?.id, windowKey],
+    queryKey: userKey(userId, 'session', activeContext?.id, windowKey),
     queryFn: () => client!.createOrGetSession(activeContext!.id, windowKey!),
     enabled: !!client && !!activeContext && windowKey !== null,
   });
@@ -83,7 +84,7 @@ export default function SuggestionScreen() {
           },
         });
       }
-      qc.invalidateQueries({ queryKey: ['session'] });
+      qc.invalidateQueries({ queryKey: userKey(userId, 'session') });
       setRespondingAction(null);
     },
     onError: () => {
