@@ -1,5 +1,48 @@
 # Project Notes
 
+## 2026-11-10 — Dish-first pivot recorded (docs only, branch `docs/dish-first-pivot`)
+
+Started from `main` at `8422298` (PR #6, meal schedule, merged). Not committed. **No application code, migration, test, or mobile file changed.** Everything below is a decision or a plan; none of it is implemented.
+
+### The pivot
+Nosh changes from "one nearby unvisited restaurant" to "one specific dish at a specific restaurant branch", proactively suggested on the user's meal schedule. Nosh Meals and social features are later extension points only.
+
+### Decisions recorded (DECISIONS.md)
+- **D031** — cuisine labels from Google place types plus a user-confirmed guess. Accepted 2026-10-26 but never written down or built; now recorded and marked superseded before implementation by D032/D034.
+- **D032** — the recommendation unit is a dish at a restaurant branch; it also records the three kinds of suggestion and the seven-milestone order. Supersedes D024 (`policy_v1`, never built).
+- **D033** — North Star: confirmed personally-new dishes tried per active user; enjoyment rate is a guardrail; tried and enjoyed are separate. Supersedes D002.
+- **D034** — supply is a published dish-offering index built offline; live status and hours are a separate eligibility input; three data classes. Supersedes D021, D022, and D027 as the supply model. Google content other than place IDs is still not stored.
+- **D035** — location basis is a user-confirmed coarse meal area (a cell, never a point); a notification names a dish only when one exists. Supersedes D023; amends D017 and D020.
+- **D036** — restaurant visits and place states are frozen, read-only history; no dish backfill, no retrospective rewards; a visited restaurant no longer excludes its dishes. Amends D018 and D025.
+- **D037** — one session per user and meal window; Go is final; the system may replace only unanswered proposals, recorded separately from user responses.
+- **D038** — one commit per request; confirmation writes the dish experience, checks novelty under a per-user lock, and inserts rewards idempotently; corrections are appended events.
+- **D039** — a cosmetic unlocks only for a new country; the avatar is computed from valid rewards. The one-home-country-per-dish rule is **proposed, awaiting confirmation**.
+- **D040** — catalog identity: dish, variant, alias; permanent IDs; about 10,000 dishes as a founder-hands-on workstream.
+- **D041** — LLMs allowed offline only, with their own evaluation sets; meal-time ranking stays deterministic. Amends D006.
+- **D042** — downtown San Mateo is the first hand-verified index; a source-comparison experiment of about 40 restaurants; Datafiniti, MealMe, and RelevantData are candidates, not selected.
+- **D043** — the ~$50/month budget (D028) is superseded and the new figure is open. Vendor pricing and menu coverage were not confirmed from vendor documentation.
+
+### Documents changed
+- `DECISIONS.md`: older entries keep their text with updated status lines; D031–D043 and an "Open questions" list added.
+- `PRODUCT.md` (version 0.2), `RECOMMENDATIONS.md`, `ARCHITECTURE.md`, `IMPLEMENTATION_HANDOFF.md`, `AGENTS.md`, and `CLAUDE.md` rewritten to separate what is implemented, what is accepted but not built, and what is historical. `policy_v0` is kept as a labelled appendix in `RECOMMENDATIONS.md`.
+- `README.md`: only statements the pivot made false (the product summary, the milestone status table, "Next", the "What is not yet complete" list, and the next-milestone list), plus a heading for a stray leftover audit table.
+- Not changed (code is out of scope): a comment in `apps/mobile/app/(app)/index.tsx` still mentions "Milestone 3 step 5".
+- `IMPLEMENTATION_HANDOFF.md` no longer says `main` is at `8bf96ff` with the meal-schedule PR open.
+
+### Facts about the code checked for this change (read-only)
+- Proposals, the candidate queue, the API schema, the card, and visits are place-shaped; `proposals.place_id` and `cuisine_id` are NOT NULL.
+- `build_candidates` excludes places in state `visited` or `not_interested`.
+- Go closes the session and empties the queue; a repeat session request returns the existing session whatever anchor it carries.
+- Service functions that write commit internally; `confirm_visit` does a full rollback on a uniqueness race; `update_visit` overwrites the rating with no event.
+- Notifications are two tables only. No Google provider and no `policy_v1` exist. The app uses a hard-coded SF point and opens Apple Maps.
+- "No, I didn't go" and "Remind me later" are client-only. Deletion removes product data but not the sign-in identity.
+
+### Verification
+- No tests were run: nothing executable changed. `git diff --check` passes and only Markdown files differ from `main`.
+
+### Open items
+- See "Open questions" in `DECISIONS.md`. Milestones 1–7 of the new plan are not started.
+
 ## 2026-10-25 — Meal schedule replaces dining contexts (Milestone 3 item 3, branch `meal-schedule`)
 
 Started from `supabase-auth` at `f920d71` (PR #4, open), so this branch stacks on the sign-in work. Not committed.

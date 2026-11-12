@@ -1,17 +1,21 @@
 # Nosh
 
-An iOS-first restaurant-discovery app: around a configured meal window it suggests one nearby unvisited restaurant, supports Go / Another / Not today, opens Apple Maps, and later confirms whether the visit happened and was good.
+> **Direction change (2026-11-10):** Nosh is pivoting from "one nearby unvisited restaurant" to "one specific dish at a specific restaurant branch" (DECISIONS.md D032–D043). **None of the pivot is implemented.** This README describes how to run and check the code that exists today, which is the earlier restaurant-shaped prototype.
+
+What the code does today: an iOS-first restaurant-discovery prototype. Around a configured meal window it suggests one nearby unvisited restaurant from fixture data, supports Go / Another / Not today, opens Apple Maps, and later confirms whether the visit happened and was good.
 
 **Milestone 0.1 — Working Local Foundation ✓**
 
 This checkpoint proves that the local database, migrations, API, recommendation engine, state machine, and mobile prototype work together. It is suitable for a source-control checkpoint; it is **not** yet ready for TestFlight or external testers.
 
-| Milestone | Status |
+Status against the original restaurant-first plan (historical; the new milestone list is in [IMPLEMENTATION_HANDOFF.md](IMPLEMENTATION_HANDOFF.md) and none of it has started):
+
+| Original milestone | Status |
 |---|---|
 | 1 — Repository and backend foundation | Complete |
 | 2 — Deterministic suggestion API | Complete |
-| 3 — Expo vertical slice | Partially complete — local vertical slice implemented; tester-readiness work remains |
-| 4 — Notifications and private cohort readiness | Not started; not next |
+| 3 — Expo vertical slice | Partially complete — local vertical slice implemented; steps 4–5 are superseded by the pivot; steps 6–7 (offline write queue, EAS/TestFlight build, icons) are still relevant, and their place in the new order is open (DECISIONS.md open question 19) |
+| 4 — Notifications and private cohort readiness | Not started beyond two tables; replaced by the new plan |
 
 All local verification gates pass (2026-10-25, after the meal-schedule change):
 - 12 root spike tests
@@ -21,7 +25,7 @@ All local verification gates pass (2026-10-25, after the meal-schedule change):
 
 Stack: FastAPI + SQLAlchemy 2 async API; Expo SDK 58 mobile app (React Native 0.88, Expo Router `~58.0.26`).
 
-**Next:** complete Milestone 3 (see [Next milestone](#next-milestone)). On 2026-10-20 the product direction changed to current-location-first with live Google Places data (DECISIONS.md D019–D028). The meal schedule (D020), price-ceiling setting (D026), and Been here already (D025) are implemented; suggestions still use fixture places and a placeholder location.
+**Next:** see [Next milestone](#next-milestone). The 2026-10-20 plan for live Google Places data (D021–D024) was superseded on 2026-11-10 before it was built. From that period, the meal schedule (D020), price-ceiling setting (D026), and Been here already (D025) are implemented; suggestions still use fixture places and a placeholder location.
 
 Running locally:
 - Docker Compose: PostgreSQL 16.4 + PostGIS 3.4
@@ -251,12 +255,12 @@ git diff --check
 ## What is not yet complete
 
 - **End-to-end local flow without Docker:** requires PostgreSQL running.
-- **Current location (Milestone 3):** the app anchors every session at a placeholder SF Mission point and has no Home/Work setup screen yet (the API supports both); the price ceiling is stored but not yet applied (`policy_v1`).
-- **Place data (Milestone 3):** suggestions use 20 fictional fixture places; D021 moves to live Google Places data.
-- **Offline resilience (Milestone 3):** session identifiers are not persisted, and idempotent response writes are not queued during transient network failures.
-- **EAS/TestFlight build (Milestone 3):** not configured.
-- **App icons (Milestone 3):** `apps/mobile/assets/icon.png` and `notification-icon.png` are 1×1 placeholders.
-- **Notifications (Milestone 4, not started):** Expo push tokens, scheduler/worker, confirmation prompts.
+- **Current location:** the app anchors every session at a placeholder SF Mission point and has no Home/Work setup screen (the API supports both; whether Home/Work spots remain is DECISIONS.md open question 11); the price ceiling is stored but not applied by anything.
+- **Dishes:** nothing in the code models a dish, a menu, or a dish offering; suggestions are restaurants drawn from 20 fictional fixture places. The dish catalog and offering index (D034, D040) are not started.
+- **Offline resilience:** session identifiers are not persisted, and idempotent response writes are not queued during transient network failures.
+- **EAS/TestFlight build:** not configured.
+- **App icons:** `apps/mobile/assets/icon.png` and `notification-icon.png` are 1×1 placeholders.
+- **Notifications (not started):** only the `device_tokens` and `notification_deliveries` tables exist; there is no worker and no device route.
 - **API hosting:** Fly.io with Supabase Postgres (D030); not yet deployed.
 
 ### Dependency audit (mobile, 2026-10-25, Expo SDK 58.0.19)
@@ -268,11 +272,14 @@ git diff --check
 
 All five come from Expo's CLI tooling: `expo` → `@expo/cli` → `@expo/code-signing-certificates` → `node-forge`, and `zod`. npm's only proposed remedy is a semver-major downgrade (`expo@54`), so `npm audit fix` / `--force` has deliberately not been run. On SDK 58.0.16 (2026-10-21) the counts were 53 total and 26 production; on SDK 53 (2026-10-13), 60 and 37.
 
----|---|---|---|---|
+Historical: the same audit on SDK 53 (2026-10-13), before the SDK 58 upgrade (D019):
+
+| Command | Moderate | High | Critical | Total |
+|---|---|---|---|---|
 | `npm audit` | 16 | 44 | 0 | 60 |
 | `npm audit --omit=dev` | 16 | 21 | 0 | 37 |
 
-The findings reach the app through `expo`, `expo-constants`, `expo-linking`, `expo-notifications`, `react-native`, `jest-expo`, and `@types/jest`; every fix npm proposes is a semver-major change (including an `expo@44` downgrade). `npm audit fix` / `--force` has deliberately not been run; resolving these requires a recorded Expo SDK upgrade decision.
+The findings reach the app through `expo`, `expo-constants`, `expo-linking`, `expo-notifications`, `react-native`, `jest-expo`, and `@types/jest`; every fix npm proposes is a semver-major change (including an `expo@44` downgrade). At that time `npm audit fix` / `--force` was deliberately not run; the SDK 58 upgrade (D019) later reduced the findings to the table above.
 
 ---
 
@@ -326,14 +333,16 @@ db/                   Docker init SQL (PostGIS; pgvector deferred per D013)
 
 ## Next milestone
 
-**Complete Milestone 3 — Expo vertical slice (tester readiness)**, following the 2026-10-20 decisions (evidence in `docs/research/2026-10-20-place-data-and-map-terms.md`):
+No implementation is in progress. The dish-first pivot (DECISIONS.md D032–D043, recorded 2026-11-10; D043's budget is open and part of D039 is proposed) replaces the earlier plan to finish "Milestone 3" with live Google Places data and `policy_v1`; that plan is historical.
 
-1. ~~Upgrade Expo SDK 53 → 58 (D019)~~ — done 2026-10-21; App Store Connect requires Xcode 26 builds.
-2. ~~Supabase passwordless email authentication~~ — done 2026-10-21 (email one-time code, one session provider, per-user query cache).
-3. ~~Meal schedule (weekday lunch default, dinner opt-in), per-meal price ceiling, and optional Home/Work fallback spots replace dining contexts (D020, D026)~~ — done 2026-10-25, with Been here already (D025).
-4. Live Google Places candidates behind a place-provider abstraction (fixtures in tests) and `policy_v1` ranking, including the price ceiling (D021, D022, D024, D026).
-5. Foreground current location at open time, Home/Work setup, a Google map on the card, and Google Maps handoff. No background location.
-6. Persist session and proposal identifiers and queue idempotent writes during transient network failures; provider content is not cached (D022).
-7. EAS development/TestFlight build, real bundle identifier, and real app and notification icons.
+The new milestones, all **not started**, are described in [IMPLEMENTATION_HANDOFF.md](IMPLEMENTATION_HANDOFF.md):
 
-Milestone 4 — notifications and private-cohort readiness — follows only after Milestone 3 is complete.
+1. Catalog schema, identity rules, seed, and evaluation set.
+2. Branch and offering tables with the San Mateo hand-verified index; source experiment in parallel.
+3. Dish onboarding and profile.
+4. Dish ranking with an additive proposals migration.
+5. Single-commit refactor, dish experience, and rewards.
+6. Notification worker and meal area.
+7. Minimal journal and avatar.
+
+Questions that are not yet decided are listed under "Open questions" in [DECISIONS.md](DECISIONS.md).
