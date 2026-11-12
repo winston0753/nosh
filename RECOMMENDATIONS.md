@@ -1,95 +1,253 @@
 # Nosh Recommendation System
 
-- **Status:** Phase-one baseline
-- **Version:** `policy_v0`
-- **Last updated:** 2026-10-20
+- **Status:** Dish policy accepted (not implemented). The code runs `policy_v0`, the restaurant policy (Appendix A)
+- **Last updated:** 2026-11-10
 
-> **Successor accepted:** `policy_v1` (DECISIONS.md D024) is accepted but not implemented. It adds hard filters for opening hours and the per-meal price ceiling, a Bayesian review-count-adjusted quality floor, a hidden-gem boost, price fit, and a national-chain penalty, removes the `highly_rated` reason code, and sorts candidates by provider ID before sampling. Under D022 its decision record stores only place identifiers, ranks, and Nosh-owned components. This document describes `policy_v0` as implemented until `policy_v1` lands.
+> **Read this first.**
 >
-> **Known `policy_v0` defects** (found 2026-10-19, confirmed 2026-10-20, to be fixed by `policy_v1`): `highly_rated` is emitted from the fixtures' fictional `quality_score`; cuisine samples are drawn in candidate encounter order, and the radius query sorts only by distance, so equal distances or reordered inputs can change the winner; `exclusion_counts` is always empty; `context_fit` does not depend on the meal type.
+> - **Accepted, not implemented:** Nosh is moving to a dish policy. It suggests one dish at one restaurant branch (DECISIONS.md D032). Sections 1–6 describe it only as far as it has been decided. **No dish policy code exists yet.** Weights, proportions, thresholds, and the meaning of each response for a dish are not decided; they are listed in section 5, "Open questions".
+> - **Implemented (historical design):** the code on `main` still runs `policy_v0`. It suggests one nearby restaurant the user has not visited, from 20 fictional San Francisco fixture places. Appendix A describes exactly what it does today.
+> - **Historical, never built:** `policy_v1` (D024) was a planned restaurant policy built on Google Places data. It was never built and is superseded by D032. Appendix B keeps a short record of it.
+>
+> The dish policy has no version name yet. This document does not invent one.
 
 ## 1. Objective
 
-The recommendation system should increase **confirmed positively rated new restaurant visits** while minimizing repeated rejection and notification fatigue.
+The North Star is **confirmed personally-new dishes tried per active user** (D033). "Personally new" means new to that user, not new to the world.
 
-It must not optimize raw novelty, completion percentage, clicks, or Maps handoffs in isolation.
+- **Tried** and **enjoyed** are two separate signals, recorded separately (D033, D038).
+- A dish the user tried and did not enjoy still counts as tried.
+- **Enjoyment rate is a guardrail.** It is watched alongside the count, but it is not part of the count. A falling enjoyment rate warns that exploration is producing poor meals.
+- Changing whether a dish was enjoyed never changes whether it was new (D038).
 
-## 2. Design principles
+The policy must not optimize raw novelty, Go taps, clicks, or Maps handoffs on their own. Go is intent, not a meal.
 
-- Apply eligibility rules before scoring.
-- Keep meal-time decisions deterministic and reproducible.
-- Separate cuisine preference from restaurant quality.
-- Learn from explicit outcomes more strongly than ambiguous actions.
-- Preserve exploration so the system can improve.
-- Store enough evidence to replay every decision.
-- Prefer a simple policy with good instrumentation over an opaque model.
+What counts as an "active user" is open (DECISIONS.md open question 14).
 
-## 3. Terminology
+## 2. Terms
 
-- **Context:** A user-defined location, radius, meal type, schedule, and time zone.
-- **Session:** One decision opportunity for a user and meal window (D020).
-- **Candidate:** An eligible unvisited restaurant considered in a session.
-- **Proposal:** The one restaurant shown at a specific sequence number.
-- **Response:** Go, Another, or Not today.
-- **Outcome:** Confirmed visit plus positive or negative rating.
-- **Policy version:** Immutable identifier for filtering, priors, weights, and tie-breaking behavior.
+- **Dish:** an entry in Nosh's own catalog, such as a named dish people order (D040).
+- **Variant:** a version of a dish that eats differently: a regional style, a different main protein, or a different preparation. Variants are one level deep (D040).
+- **Alias:** another name for the same dish or variant. It has no ID of its own (D040).
+- **Branch:** one physical location of a restaurant.
+- **Offering:** a dish (or variant) offered at a specific branch, backed by menu evidence.
+- **Published offering:** an offering that has passed Nosh's offline pipeline and review (D034). Only published offerings can be suggested.
+- **Dish experience:** the record that a user actually ate a dish, confirmed after the meal (D038).
+- **Session:** one decision opportunity for one user and one meal window. There is still one session per user and meal window (D037).
+- **Proposal:** the one dish-at-a-branch shown to the user at a given point in a session.
+- **Explicit constraint:** a limit the user has stated, such as a dietary rule. Which constraints are collected is open (open question 10).
 
-## 4. Eligibility filters
+## 3. The dish policy: what is decided
 
-A place is eligible only when all applicable rules pass:
+Everything in this section is **accepted but not implemented**.
+
+### 3.1 The unit
+
+The policy picks **one specific dish at one specific restaurant branch** (D032). Everything that used to be built around "a restaurant" is redefined around "a dish at a branch": ranking, confirmation, the success metric, and history.
+
+### 3.2 What the policy reads
+
+- **Only published offerings** (D034). The index is built offline: sources → adapters → branch match → source-backed menu items → mapping to the dish catalog → review → published offering. Meal-time ranking never reads raw provider content directly.
+- **Live place status and opening hours, as a separate eligibility input** (D034). They can make an offering ineligible right now (for example, the branch is closed). They never prove that a restaurant serves a dish. Which provider supplies them is open (open question 4).
+- **The shared catalog** for facts about dishes, including cuisine (D040). Cuisine comes from the catalog, not from place types.
+- **The user's own data:** preferences, explicit constraints, the meal area (D035), and their dish experiences.
+
+### 3.3 Eligibility rules that are decided
+
+1. The offering is published.
+2. The live status and hours do not make it ineligible right now.
+3. It respects every explicit user constraint. **The policy never overrides an explicit constraint**, even when that leaves nothing to suggest.
+4. **A restaurant the user has already visited does not exclude its dishes** (D036). A familiar restaurant can serve a dish that is new to the user. This is the opposite of what the code does today (Appendix A.2).
+
+Other rules, such as whether a dish or branch may repeat within a session or in back-to-back meal windows, are not decided (section 5).
+
+### 3.4 Three kinds of suggestion
+
+Suggestions come in three kinds (D032):
+
+- **Familiar:** close to what the user already eats and enjoys.
+- **Adjacent:** a step away from what the user knows.
+- **Broader exploration:** further afield, such as a dish from another culinary region.
+
+When the user's recent experience is concentrated (for example, mostly one cuisine), the policy **widens toward other culinary regions**. It never does this by breaking an explicit constraint.
+
+The balance between the three kinds, how "concentrated" is measured, and how fast the policy widens are **open** (open question 6).
+
+### 3.5 What the policy learns from
+
+- **Taste evidence comes from dish experiences** (D038). It is derived from the experience history each time it is needed, not stored separately as the source of truth. That means it can always be recomputed.
+- **Tried and enjoyed are separate signals** (D033, D038). A dish can be tried and not enjoyed.
+- **Corrections are appended as new events** (D038). If the user changes which dish they ate, both the old and the new dish are re-evaluated. If the user retracts an experience, it stops counting.
+- **"Been here" keeps its meaning** (the user had been to that restaurant before Nosh) but is **a familiarity signal only** (D036). It no longer removes the restaurant from suggestions.
+- **Old restaurant data is frozen history** (D036). Restaurant visits and place states recorded before the pivot are kept, read-only. They are not turned into dish experiences.
+
+What Another, Not today, and "Been here" should teach the dish policy is **open** (open question 9). D011's rule for Another was written for restaurants.
+
+### 3.6 Menu evidence is not quality evidence
+
+A published offering shows that a branch **offers** a dish. It does not show the dish is **good** (D034). Google ratings are not stored (D034 keeps D022's rule that Google content other than place IDs is not stored). What quality signal, if any, the dish policy uses is **open** (open question 7). Until it is decided, a sensible precaution (a recommendation of this document, not a recorded decision) is that the card does not imply a dish is the best of its kind.
+
+### 3.7 Deterministic at meal time; LLMs only offline
+
+- **Meal-time ranking is deterministic and makes no LLM call** (D041, amending D006). The same inputs and policy version must give the same suggestion.
+- LLMs may be used **offline** for catalog generation and menu mapping (D041). Their output reaches the policy only as stored facts marked generated, reviewed, or source-backed (D040), and as reviewed offerings (D034).
+- The policy is versioned (D006). Each proposal records the version that produced it. The version name is not chosen.
+
+### 3.8 Sessions and replacement
+
+These session rules affect what the policy may do (D037):
+
+- Go is final for that meal window. There is no "change my pick".
+- The system may replace an **unanswered** proposal, for example when the location changed or the offering went stale. That replacement is recorded separately from user responses, so it is never read as the user's feedback.
+- An accepted proposal is never replaced silently. If an accepted offering goes stale, the user sees a notice.
+
+## 4. Evaluation
+
+### 4.1 For the future dish policy
+
+**Offline LLM tasks.** Catalog generation and menu mapping each need their own evaluation set before their output is trusted (D041). Who reviews generated facts, the evaluation sets, and their pass marks are open (open question 17). The D042 source experiment separately measures mapping accuracy, branch correctness, and freshness for each candidate source.
+
+**Human-labeled checks.** Build a small review set of representative users, meal areas, and constraints with the offerings that should and should not be eligible. Check that:
+
+- only published offerings appear;
+- closed branches are excluded;
+- explicit constraints are never broken;
+- a visited restaurant's dishes still appear;
+- the dish shown is really offered at that branch;
+- any reason shown to the user is factual.
+
+**Logged-session replay.** Once real sessions exist: re-run the policy on stored inputs to confirm it reproduces the same proposal; compare rankings between versions without claiming that one causes better outcomes; use counterfactual methods only after the needed probabilities are logged correctly.
+
+**Online observation** (no automated A/B testing in phase one). Track by policy version:
+
+- confirmed personally-new dishes tried (the North Star);
+- enjoyment rate (the guardrail);
+- the mix of familiar, adjacent, and broader suggestions shown and accepted;
+- Go rate, Another per session, and confirmation rate;
+- how often the user reports eating something else;
+- no-candidate rate;
+- notification disable rate.
+
+Do not promote a policy because it raises Go taps if it lowers confirmed new dishes or enjoyment, or raises notification disabling.
+
+**Tests to write when the dish policy is built.** These follow directly from accepted decisions:
+
+- only published offerings are ever proposed;
+- an offering made ineligible by live status is never proposed;
+- an explicit constraint is never overridden;
+- a visited restaurant does not exclude its dishes;
+- no LLM call happens in the meal-time path;
+- the same inputs and version reproduce the same proposal;
+- every proposal records its policy version;
+- a system replacement is never recorded as a user response;
+- duplicate events do not count twice;
+- changing "enjoyed" never changes novelty or a reward.
+
+### 4.2 The existing simulator
+
+The paired-user cuisine simulator (`spike/cuisine_policy_sim.py`) stays. It is a **regression test of the cuisine-selection mechanism** used by `policy_v0`. It is not a forecast, and it does not model dishes. It treats a rejected proposal as cuisine feedback more strongly than the product does (Appendix A.6). Run it with the commands in `README.md`.
+
+## 5. Open questions
+
+These are **not decided**. Do not build on an assumed answer. The canonical list is "Open questions" at the end of `DECISIONS.md`; numbers below refer to it.
+
+- **Policy weights (open question 6).** The balance between familiar, adjacent, and broader-exploration suggestions; how "recent experience is concentrated" is measured; how fast suggestions widen toward other culinary regions.
+- **Restaurant quality (open question 7).** Menu evidence does not establish quality, and Google ratings are not stored. What quality signal, if any, the dish policy uses is undecided.
+- **Price ceiling (open question 8).** How the per-meal ceiling (D026) applies to dish offerings. Today it is stored and used nowhere.
+- **Response meanings for dishes (open question 9).** What Another, Not today, and "Been here" teach the dish policy.
+- **Explicit constraints (open question 10).** Which constraints onboarding collects and how they are worded. The policy never overrides them, whatever they are.
+- **Live place status and opening hours (open question 4).** Which provider supplies them, and what its terms require of the card.
+- **"I ate something else" (open question 13).** How the user picks the actual dish at confirmation, and what happens when it is not in the catalog.
+- **Active user (open question 14).** The period that defines "active" for the North Star, and any target values.
+- **Catalog process (open question 17).** Who reviews generated facts, the evaluation sets and their pass marks, and how catalog versions are numbered.
+
+- **Initial dish preferences (open question 20).** How onboarding answers shape suggestions for a new user with no dish experiences.
+- **Repetition (open question 21).** Whether the same dish, or the same branch, may be proposed again within a session or in back-to-back meal windows.
+- **Variants and the North Star (open question 22).** Whether trying a new variant of a dish the user has already had counts as a personally-new dish. (D039 gives a new variant a journal entry, but does not say whether it counts toward D033.)
+- **Nothing eligible (open question 23).** What the user sees when no published offering is eligible, and whether any rule may be relaxed (explicit constraints may not).
+
+The dish policy's version name, formulas, and any numeric thresholds are also undecided.
+
+## 6. Out of scope
+
+These are not part of phase one. Each would need its own ground truth, failure cases, and evaluation set before being built:
+
+- contextual bandits using time, weather, companions, or calendar state;
+- free-text craving search;
+- embeddings and vector retrieval (pgvector stays absent, D013);
+- learned quality models;
+- group preferences (social features are a possible later extension only);
+- causal online experiments;
+- any LLM call at meal time (rejected, D041);
+- automatic dietary or allergen inference.
+
+---
+
+## Appendix A — policy_v0: what the code does today (restaurant policy, historical design)
+
+**Status: implemented.** This is the only recommendation policy in the code. Its unit is a restaurant, and its design is superseded by the dish policy (D032). It will keep running until dish ranking is built. Code: `services/api/app/recommendations/` (pure engine) and `services/api/app/places/service.py` (candidate building); sessions call it from `services/api/app/suggestions/service.py`.
+
+### A.1 Objective (historical)
+
+`policy_v0` was designed to increase confirmed, positively rated new restaurant visits (D002, now superseded by D033). The progress screen still computes that restaurant metric.
+
+### A.2 Eligibility filters
+
+`build_candidates` keeps a place only when all of these pass:
 
 1. The place is active.
-2. Its location is within walking range (1,600 m in `policy_v0`) of the session's anchor: the device location, or a saved Home/Work spot.
-3. It is not confirmed visited.
-4. It is not marked Not interested.
-5. It has not already been proposed in the current session.
-6. It has at least one normalized cuisine.
-7. It satisfies any explicit supported constraint.
+2. It is within **a fixed 1,600 m radius** of the session's anchor point. The anchor is the transient device location sent with the request or a saved Home/Work spot. (The app today always sends a hard-coded San Francisco Mission point.)
+3. The user's state for it is not `visited`. This includes places marked "Been here already" and places confirmed through Nosh.
+4. The user's state for it is not `not_interested`.
+5. It has not already been proposed in this session.
+6. It has at least one cuisine. The primary cuisine is used; if none is marked primary, the first is used.
 
-Opening hours, delivery availability, detailed dietary safety, and live capacity are not trusted phase-one filters unless the curated dataset explicitly supports them.
+Not applied, although the old design or the stored data mentions them:
 
-If no candidate is eligible, return `no_candidates` with reason codes. Do not relax privacy or user-exclusion rules automatically.
+- The per-meal **price ceiling** is stored but **not used** in filtering or ranking.
+- Opening hours are not checked.
+- No other explicit user constraint exists.
 
-## 5. Phase-one policy
+If nothing is eligible, the session ends in `no_candidates` with the reason code `no_eligible_candidates`.
 
-The policy has two levels:
+### A.3 Cuisine score
 
-1. select a cuisine worth exploring;
-2. select the strongest eligible restaurant within that cuisine.
+The policy has two levels: pick a cuisine, then pick the best eligible restaurant in it.
 
-### 5.1 Cuisine score
-
-For cuisine `c`:
+For each cuisine `c` that still has eligible, unproposed places:
 
 ```text
-cuisine_score(c) = sampled_acceptance(c) × pool_value(unvisited_count(c))
+cuisine_score(c) = theta_c × pool_value(n_c)
 
 pool_value(n) = 1 - exp(-n / 2)
-```
-
-`sampled_acceptance(c)` is drawn from a Beta posterior:
-
-```text
 theta_c ~ Beta(alpha_c, beta_c)
 ```
 
-Initial phase-one prior:
+`n_c` is the number of eligible places in that cuisine not yet proposed in the session. The cuisine with the highest score wins; an exact tie goes to the lower cuisine ID string.
+
+Prior:
 
 ```text
-alpha_c = 1 + history_prior_strength × normalized_history_frequency(c)
-beta_c  = 1 + history_prior_strength × (1 - normalized_history_frequency(c))
-history_prior_strength = 4
+alpha_c = 1 + 4 × f(c)
+beta_c  = 1 + 4 × (1 - f(c))
 ```
 
-If no pre-Nosh history exists, use `Beta(1, 1)` for every cuisine. When history exists, a cuisine absent from it has `normalized_history_frequency = 0`, giving `Beta(1, 5)`.
+`f(c)` is the share of the user's pre-Nosh places whose primary cuisine is `c`. With no pre-Nosh history at all, every cuisine uses `Beta(1, 1)`. With history, a cuisine absent from it has `f = 0`, giving `Beta(1, 5)`.
 
-**Provenance.** Pre-Nosh history is only the primary cuisines of places the user marked Been here already on a suggestion (D025), or Been during the former onboarding step (`was_visited_before_nosh = TRUE`). A place that became visited through a Nosh confirmation, a manual settings edit, or an import is not history. Confirmed outcomes (§7) come only from proposal-backed visits; manual visits do not update cuisine preference (D015). A post-Nosh visit is therefore never counted both as history and as an outcome.
+Then confirmed outcomes are added:
 
-The simulator supports this mechanism as preferable to lowest been-to percentage under its assumptions. The prior strength is still a hypothesis and must be versioned.
+```text
+alpha_c += number of positive proposal-backed visits in c
+beta_c  += 0.25 × number of negative proposal-backed visits in c
+```
 
-### 5.2 Restaurant score
+**Provenance.** Pre-Nosh history is only places with `was_visited_before_nosh = TRUE`: places the user marked "Been here already" on a suggestion (D025), or Been during the former onboarding step (D018). A place that became visited through a Nosh confirmation or a manual settings edit is not history. Outcomes come only from proposal-backed visits; manual visits do not change cuisine preference (D015). So a visit is never counted both as history and as an outcome.
 
-Within the selected cuisine, compute:
+The simulator supported this mechanism over "lowest been-to percentage" under its assumptions. The prior strength of 4 was a hypothesis.
+
+### A.4 Restaurant score
+
+Within the chosen cuisine:
 
 ```text
 place_score =
@@ -99,174 +257,81 @@ place_score =
   + 0.10 × exploration_score
 ```
 
-All components are normalized to `[0, 1]`.
+- `quality_score`: the fixture's fictional `quality_score` from place metadata; 0.5 when missing.
+- `distance_score`: `1 - distance / 1,600 m`, so 1 at the anchor and 0 at the edge.
+- `context_fit`: 1.0 when a meal type is given and the cuisine is the place's primary cuisine, otherwise 0.5. Sessions always pass a meal type and fixtures have primary cuisines, so in practice it is constant.
+- `exploration_score`: a hash of the place ID and sequence number, scaled to `[0, 1]`. It acts as a deterministic tie-breaker, not a real measure of exposure.
 
-- `quality_score`: curated score or Bayesian-adjusted source rating when licensed and available; use a neutral default when missing.
-- `distance_score`: monotonic distance decay within the walking radius.
-- `context_fit`: supported match for meal type or explicit user constraint; otherwise neutral.
-- `exploration_score`: deterministic tie-break preference for underexposed eligible places.
+The highest score wins; an exact tie goes to the lower place ID string.
 
-Do not claim the selected restaurant is objectively “best.” The UI may say why it was selected using stored reason codes such as `nearby`, `new_to_you`, `preferred_cuisine`, or `many_options_remaining`.
+Reason codes emitted: `nearby` (distance score above 0.7), `new_to_you` (always), and `highly_rated` (quality above 0.7). The codes `preferred_cuisine` and `many_options_remaining` appeared in the old design but are never emitted.
 
-### 5.3 Tie-breaking
+### A.5 Determinism and the candidate queue
 
-Tie-breaking must be stable for a given session seed and policy version. This allows decision replay while still varying exploration across sessions.
+The random draw is seeded from the session ID, the sequence number, and the policy version. At session creation the whole ranking is computed once and stored as the session's candidate queue: entry *n* is what the policy would propose after the first *n − 1* were declined. Another and "Been here already" take the next queue entry. Go and Not today close the session and empty the queue. Creating a session also empties the queues of the user's other sessions. A repeat request for the same meal window returns the existing session and its queue, whatever location it carries.
 
-## 6. Feedback semantics
+### A.6 Feedback semantics (D011, restaurant)
 
-### Strong signals
+- **Confirmed positive visit (proposal-backed):** strong positive cuisine evidence (`alpha += 1`).
+- **Confirmed negative visit (proposal-backed):** weak negative cuisine evidence (`beta += 0.25`).
+- **Manual visit:** history for the progress screen; no cuisine update (D015).
+- **Not interested:** hard exclusion of the place.
+- **Been here already:** marks the place visited before Nosh, excludes it, feeds the history prior, and never counts toward the North Star (D018, D025).
+- **Go:** intent only; not a visit or a rating.
+- **Another:** no cuisine update. It may mean cuisine, distance, mood, or curiosity.
+- **Not today:** timing only; closes the session; never updates preference.
 
-- Confirmed positive visit: strong positive place outcome and positive cuisine evidence.
-- Confirmed negative visit: negative place outcome; weak negative cuisine evidence.
-- Explicit Not interested on a place: hard place exclusion.
-- Manual Been state: visit history, not a quality signal.
+The simulator treats a rejected proposal as cuisine feedback more strongly than this. That difference is deliberate and stays explicit.
 
-### Ambiguous signals
+### A.7 How preference is computed
 
-- Go: intent only; do not treat as a visit or positive rating.
-- Another: weak negative evidence for the proposed place. It may mean cuisine, distance, mood, or curiosity, so phase one does not apply a full cuisine rejection.
-- Not today: timing signal only; never update cuisine or place preference.
-- Notification dismissal: no preference update.
+There is no stored preference table. Each time a session is created, cuisine evidence is recomputed from place states and proposal-backed visits (`app/recommendations/priors.py`). The old design's materialized `cuisine_preference_state` was never built.
 
-The current simulator models proposal rejection as cuisine feedback more strongly than the phase-one product should. This difference must remain explicit until real response data explains what Another means.
+### A.8 Cold start
 
-## 7. Updating preference state
+- With pre-Nosh history: the cuisine mix of "Been here already" places is a weak prior; those places are excluded.
+- Without history: `Beta(1, 1)` for every cuisine, and `pool_value` favours cuisines with several eligible places.
+- New place: neutral quality 0.5.
 
-Phase one should derive preference state from an append-only response and outcome history where practical. A materialized `cuisine_preference_state` may cache:
+### A.9 Repetition
 
-- cuisine ID;
-- user ID;
-- alpha and beta parameters;
-- source event watermark;
-- policy version that produced the state.
+A place is never repeated within a session. The old design's rule against proposing the same place in consecutive meal windows was not implemented. Recent cuisine exposure is not tracked.
 
-Recomputation from source events must be possible. Manual state edits require an audit event.
+### A.10 Logged decision record
 
-Suggested initial updates:
+Stored today:
 
-- confirmed positive visit: `alpha += 1.0`;
-- confirmed negative visit: `beta += 0.25`;
-- Another: no cuisine update in `policy_v0`;
-- Not today or dismiss: no cuisine update.
+- on the session: policy version, meal-schedule version, and anchor source (`device`, `home`, `work`, or `legacy_context`; never the coordinate);
+- on each proposal: place ID, cuisine ID, sequence number, total score, each score component, reason codes, and a snapshot holding the candidate count, chosen cuisine, sampled cuisine value, unvisited pool size, exclusion counts, session seed, and distance in metres.
 
-These values are hypotheses. Any change creates a new policy version.
+The candidate place IDs themselves are not stored, only their count. The user's coordinates are not stored.
 
-## 8. Cold start
+### A.11 Known defects
 
-### User with pre-Nosh history
+Found 2026-10-19 and confirmed 2026-10-20. `policy_v1` was meant to fix them; it was never built, so they remain:
 
-- Use the cuisine frequency of places marked Been here already as a weak taste prior.
-- Exclude places marked Been or Not interested.
-- Preserve exploration across cuisines with unvisited supply.
+- `highly_rated` comes from the fixtures' fictional `quality_score`.
+- Cuisine samples are drawn in the order candidates are met, and the radius query sorts only by distance. Equal distances or reordered input can change the winner.
+- `exclusion_counts` is always empty.
+- `context_fit` does not depend on the meal type.
 
-### New user without pre-Nosh history
+### A.12 Required invariants (as currently tested)
 
-- Use uniform `Beta(1, 1)` cuisine priors.
-- Prefer cuisines with multiple eligible places rather than tiny categories.
-- Use neutral place-quality defaults where data is missing.
-- Ask for confirmation quickly so real outcomes replace priors.
-
-### New place
-
-- Use neutral quality and a small exploration component.
-- Do not over-rank it solely because it has no history.
-
-## 9. Diversity and repetition controls
-
-- Never repeat a place within a suggestion session.
-- Avoid proposing the same place in consecutive meal windows unless the user explicitly saved it for later.
-- Track recent cuisine exposure and use it only as a bounded tie-breaker.
-- Do not enforce diversity by suggesting a cuisine with poor acceptance evidence.
-- Keep lunch and dinner sessions separate because location and intent differ.
-
-## 10. Logged decision record
-
-Every proposal stores:
-
-- policy version;
-- meal-schedule version and anchor source (device, home, or work; never the coordinate);
-- candidate place IDs;
-- exclusion counts by reason;
-- chosen cuisine and sampled acceptance value;
-- unvisited pool size;
-- each place score component;
-- final score;
-- deterministic session seed or replay token;
-- reason codes shown to the user;
-- creation timestamp.
-
-Do not store unnecessary precise user coordinates in the candidate snapshot.
-
-## 11. Offline evaluation
-
-### Simulator
-
-Retain the existing paired-user simulator to test mechanisms and regressions. It is not a forecast.
-
-Report:
-
-- confirmed or simulated new restaurants;
-- positive outcome rate when modeled;
-- proposals and Another actions per session;
-- cuisine acceptance rate;
-- no-candidate rate;
-- mute/churn proxy;
-- paired confidence intervals against the current production policy.
-
-### Logged-session replay
-
-Once real events exist:
-
-- verify filter invariants against historical states;
-- replay deterministic score components;
-- compare candidate rankings without claiming causal lift;
-- use counterfactual evaluation only after propensities are logged correctly.
-
-### Human-labeled checks
-
-Create a small review set containing expected eligible and ineligible places for representative contexts. Verify distance, visit state, exclusions, cuisine normalization, and factual reason codes.
-
-## 12. Online evaluation
-
-Phase one uses observation, not automated A/B testing.
-
-Track by policy version:
-
-- Go rate;
-- Another actions per session;
-- completed confirmation rate;
-- confirmed positive new visits;
-- negative visit rate;
-- notification disable rate;
-- no-candidate rate.
-
-Do not promote a policy because it increases Go taps if it lowers confirmed positive outcomes or increases notification disabling.
-
-## 13. Required invariants
-
-Automated tests must prove:
+Automated tests cover:
 
 - visited places are never eligible;
 - Not interested places are never eligible;
 - inactive and out-of-radius places are never eligible;
 - a place is not repeated within a session;
 - Not today does not change cuisine preference;
-- duplicate response events do not update state twice;
-- the same session and replay seed reproduce the same proposal;
-- every proposal references an immutable policy version;
-- exhausted candidate sets return `no_candidates` safely.
+- duplicate responses do not change state twice;
+- the same session and seed reproduce the same proposal;
+- every result carries the policy version;
+- an exhausted candidate set returns `no_candidates` safely;
+- pre-Nosh history comes only from "Been here already", and outcomes only from proposal-backed visits.
 
-## 14. Future recommendation capabilities
+Run the checks in `README.md` for current results.
 
-These are outside phase one:
+## Appendix B — policy_v1 (historical, never built)
 
-- contextual bandits using time, weather, companions, or calendar state;
-- hybrid retrieval for free-text cravings;
-- menu and review embeddings;
-- learned place-quality models;
-- group preference aggregation;
-- causal online experimentation;
-- LLM-written explanations;
-- automatic dietary or allergen inference.
-
-Each capability must define its ground truth, failure modes, and evaluation set before implementation.
+`policy_v1` (D024, 2026-10-20) was the planned successor to `policy_v0`. It would have ranked restaurants using live Google Places data (D021): hard filters for opening hours and the price ceiling, a review-count-adjusted quality floor, a hidden-gem boost, price fit, and a national-chain penalty, with candidates sorted by provider ID before sampling. **It was never built.** D032 superseded it, and D034 superseded the Google Places supply model it relied on. It is kept here only as history; none of its components is part of the dish policy.
