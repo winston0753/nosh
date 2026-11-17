@@ -1,11 +1,11 @@
 # Nosh Decision Log
 
 - **Status:** Active
-- **Last updated:** 2026-11-10
+- **Last updated:** 2026-11-17
 
 This file records product and architecture decisions that affect multiple parts of the system. Each entry includes the selected option, rejected alternatives, consequences, and conditions for reconsideration.
 
-**Direction change (2026-11-10): the dish-first pivot.** Nosh now recommends one specific dish at a specific restaurant branch, instead of one nearby unvisited restaurant. Decisions D032–D043 record the pivot. **None of D032–D043 is implemented**: the code on `main` still does what the older entries describe (restaurant suggestions from fixture places, `policy_v0`). Older entries are never deleted; their status lines say what replaced them.
+**Direction change (2026-11-10): the dish-first pivot.** Nosh now recommends one specific dish at a specific restaurant branch, instead of one nearby unvisited restaurant. Decisions D032–D043 record the pivot, and D044–D048 add to it. **None of D032–D048 is implemented**: the code on `main` still does what the older entries describe (restaurant suggestions from fixture places, `policy_v0`). Older entries are never deleted; their status lines say what replaced them.
 
 How to read a status line:
 
@@ -533,7 +533,7 @@ Google Cloud quotas and billing alerts must be set so usage cannot exceed the fr
 
 ## D029 — Bundle identifier `com.winstontang.nosh`
 
-- **Status:** Accepted (not yet applied to `app.json`; that was step 7 of the old Milestone 3, and where it falls in the new milestone order is open question 19)
+- **Status:** Accepted (not yet applied to `app.json`). D048 (2026-11-17) places this in Milestone 6, with the first EAS/TestFlight build
 - **Date:** 2026-10-26
 
 ### Decision
@@ -546,7 +546,7 @@ The identifier is permanent once the App Store Connect app record exists. The Go
 
 ## D030 — Host the API on Fly.io with Supabase Postgres
 
-- **Status:** Accepted (not yet deployed; that was step 7 of the old Milestone 3, and where it falls in the new milestone order is open question 19)
+- **Status:** Accepted (not yet deployed). D048 (2026-11-17) places the deployment in Milestone 6, because the notification worker needs a running server
 - **Date:** 2026-10-26
 
 ### Decision
@@ -606,7 +606,7 @@ The agreed order of work is seven milestones, none started: (1) catalog schema, 
 
 ## D033 — North Star: confirmed personally-new dishes tried
 
-- **Status:** Accepted (not implemented)
+- **Status:** Accepted (not implemented). Amended by D044 (2026-11-12) — this stays as the separate discovery measure; for the San Mateo pilot the main behavioural measure is confirmed first-pick meals
 - **Date:** 2026-11-10
 - **Supersedes:** D002
 
@@ -636,7 +636,7 @@ Live place status and opening hours are a separate eligibility input. They can m
 
 Data falls into three classes, kept apart:
 
-1. **Shared catalog** — owned by Nosh (dishes, variants, aliases, and their facts; D040).
+1. **Shared catalog** — owned by Nosh (dishes, aliases, and their facts; D040 as amended by D046).
 2. **Provider content** — anything obtained from an outside source. Every item is tagged with its source, retrieval date, and expiry, and all content from one source can be purged on its own.
 3. **Personal data** — what a user tells Nosh or does in it.
 
@@ -654,7 +654,7 @@ Menu acquisition and offline processing move into scope (they were non-goals). W
 
 ## D035 — Location basis: a user-confirmed coarse meal area
 
-- **Status:** Accepted (not implemented)
+- **Status:** Accepted (not implemented). Amended by D044 (2026-11-12) — the pick is prepared ahead so it is ready if the user opens the app before the notification
 - **Date:** 2026-11-10
 - **Supersedes:** D023. **Amends:** D017 and D020
 
@@ -738,28 +738,28 @@ A refactor of the existing services is required before the dish experience is bu
 
 ## D039 — Rewards and avatar: a cosmetic only for a new country
 
-- **Status:** Accepted (not implemented), except the one-home-country rule, which is **Proposed, awaiting confirmation**
+- **Status:** Accepted (not implemented). The one-home-country rule, first proposed here, was accepted by D046 (2026-11-17). Amended by D046: there is no separate variant level, so "a new variant of a dish" is now a newly named dish
 - **Date:** 2026-11-10
 
 ### Decision
 
 - A cosmetic for the avatar unlocks only when the user tries a dish from a country that is new to them.
-- A new dish, or a new variant of a dish, gets a journal entry and a discovery moment, but no cosmetic.
+- A dish new to the user gets a journal entry and a discovery moment, but no cosmetic unless its home country is also new to the user. Under D046 a newly named version of a familiar dish (for example miso carbonara after carbonara) is its own dish, so this covers it.
 - The avatar is always computed from the rewards that are currently valid, so a retraction removes the cosmetic.
-- **Proposed, awaiting confirmation:** each dish has exactly one home country for unlock purposes, plus optional secondary associations that never unlock anything.
+- Each dish has exactly one home country for unlock purposes, plus optional secondary associations that never unlock anything. (Proposed on 2026-11-10; accepted by D046 on 2026-11-17, where the secondary associations are the dish's cuisine tags.)
 
 ### Alternatives rejected
 
-- **A cosmetic for every new dish or variant:** rejected; those get a journal entry and a discovery moment instead.
+- **A cosmetic for every new dish:** rejected; a new dish gets a journal entry and a discovery moment instead.
 - **Storing the avatar's state directly:** it could drift from the rewards after a correction.
 
 ### Consequences
 
-Rewards must be individually valid or invalid (D038). Until the one-home-country rule is confirmed, the catalog work must not depend on it.
+Rewards must be individually valid or invalid (D038). The catalog records one home country per dish (D046).
 
 ## D040 — Catalog identity: dish, variant, alias
 
-- **Status:** Accepted (not implemented)
+- **Status:** Accepted (not implemented); amended by D046 (2026-11-17) — there is no separate variant level. A version that eats differently is its own dish with its own permanent ID, and may link to one base dish. ID permanence, merge redirects, aliases, fact marking, and versioning stand
 - **Date:** 2026-11-10
 
 ### Decision
@@ -837,32 +837,193 @@ Vendor pricing and menu coverage were **not** confirmed from vendor documentatio
 
 No paid feed is committed to. The budget is decided after the experiment, as a new entry or an update to this one.
 
+## D044 — Pilot promise, a ready pick, and what the pilot measures
+
+- **Status:** Accepted (not implemented). The parts listed under "Assumptions to test" are hypotheses, not agreed facts
+- **Date:** 2026-11-12
+- **Amends:** D033 and D035
+
+### Decision
+
+The San Mateo pilot is built around one promise:
+
+> "When lunch crosses your mind, Nosh already has one specific dish at a nearby restaurant worth saying yes to."
+
+Agreed:
+
+- **The pick is ready early.** If someone opens Nosh before the notification arrives, the suggestion for that meal is already there.
+- **Actions stay as they are.** Go, Another, Not today, and the existing after-meal confirmation. No recurring questions are added.
+- **One pilot conversation.** After a participant has had a few Nosh lunches, the owner asks them once, in conversation and outside the app: "Think about the last Nosh dish you ate. How did you decide on it?"
+- **Main behavioural measure: confirmed first-pick meals.** How often a user eats the first dish suggested for a meal, whether that dish is familiar or new to them, and whether they keep doing so in week two.
+- **Taste match is kept apart from decision help.** If a participant says they had already chosen that dish before Nosh suggested it, it counts as a positive taste match. It is recorded separately from a decision Nosh helped make. The conversations are how the pilot learns when Nosh helped someone decide.
+- **Discovery is measured separately.** Confirmed personally-new dishes tried per active user (D033) stays, as its own measure.
+- **The familiar/new balance stays open** until the pilot shows what brings people back (open question 6).
+
+Unchanged: the pilot area and scope (D042), and everything deferred (Nosh Meals, social features, ordering, a chat concierge).
+
+### Assumptions to test
+
+- **Nudge timing.** The pilot starts by sending the nudge about 15 minutes before the user's scheduled eating time. This timing is a hypothesis and is expected to change.
+- **The first pick is the right thing to watch.** That eating the first suggestion, and still doing so in week two, shows the promise is being kept.
+- **One conversation is enough** to tell a decision Nosh helped make from a dish the person had already chosen.
+- **People want the pick before they are asked.** That a suggestion already waiting is more useful than one produced when the app opens.
+
+### Alternatives rejected
+
+- **A recurring in-app question about how the user decided:** adds friction to every meal and changes the behaviour being measured.
+- **Counting only personally-new dishes as success:** would miss the case where Nosh correctly suggests something familiar the person is glad to eat.
+- **Fixing the familiar/new balance now:** there is no evidence yet for what brings people back.
+
+### Consequences
+
+- The suggestion must exist before the notification is sent, so it is prepared ahead of the meal rather than only when the app opens. This relies on the meal area (D035). When no meal area exists, nothing can be prepared ahead; what happens then stays open (questions 11 and 12).
+- The confirmation record must make it possible to tell whether the dish eaten was the first one suggested for that meal.
+- "Had already chosen it" versus "Nosh helped me decide" comes from the pilot conversations, not from app data. The app does not ask.
+- Until a later decision says otherwise, "the North Star" in these documents still means D033's discovery measure. During the pilot it is read alongside, and after, the main behavioural measure.
+- Today's meal schedule stores a time window, not a single eating time. What "scheduled eating time" means is open (question 26).
+
+## D045 — Text messages (SMS) as a second delivery channel
+
+- **Status:** Proposed, awaiting confirmation; set aside by the owner on 2026-11-16 and not being pursued for now. Do not build on it
+- **Date:** 2026-11-16
+- **Relates to:** D035, D037, D038, D041, D043, D044
+
+### Proposal
+
+Nosh may deliver the meal-time message as a text message (SMS) as well as, or instead of, a push notification. SMS is a **delivery channel**, not a separate feature:
+
+- **One worker decides what to send.** The planned notification worker (milestone 6) prepares the pick ahead of time (D044), applies the dish-naming rule (D035), and sends at most one message per user and meal window. The channel only decides how that message is delivered. The deduplication key includes the channel.
+- **Push comes first.** Milestone 6 builds push as planned, but designs the worker and `notification_deliveries` with a channel field from the start, so SMS can be added without rework. The schema change is additive: a channel column, a per-user channel preference (push, SMS, or both), and later a table for inbound replies.
+- **SMS starts one-way.** The text carries the pick and a link that opens the app; the user answers Go, Another, or Not today in the app. Example: "Lunch idea: the khao soi at ___ (8 min walk). Open: <link>".
+- **Replies, if added later, are fixed keywords only** (for example 1 = Go, 2 = Another, 3 = Not today). They follow the app's rules: Go is final for the window (D037), each reply is one idempotent commit (D038), and no LLM reads them (D041). Free-text replies are out of scope; they would become the conversational concierge listed as a non-goal.
+- **The phone number is personal data.** It is verified with a one-time code (Supabase phone sign-in can do this), stored with the user's personal data, never logged, and removed by `DELETE /v1/me/product-data`.
+- **Explicit opt-in.** Texting needs recorded consent (when and how the user agreed), working STOP and HELP keywords, and an immediate stop after an opt-out. Push permission and SMS consent are separate.
+
+### Why
+
+- It reaches people who denied push permission, and a text is harder to miss than a banner, which suits the promise that the pick is already waiting (D044).
+- Treating it as a channel keeps one place that decides what Nosh says, so the D035 and D037 rules cannot drift between channels.
+
+### Alternatives rejected
+
+- **iMessage:** apps cannot send iMessages programmatically. Apple Messages for Business is a separate, approval-gated product for customer service.
+- **SMS instead of push, from the start:** every message costs money, and sender registration and consent handling are real work before the first pilot message.
+- **Two-way free-text conversation:** a conversational concierge is a non-goal, and reading free text would put language handling in the meal-time path.
+
+### Consequences
+
+- **Cost.** Every text costs money, so SMS depends on the open budget (D043). Provider prices were **not** checked; no figure is assumed.
+- **Sender registration.** US carriers require a registered sender (a 10DLC campaign or a verified toll-free number). Approval can take weeks, and unregistered traffic is filtered. Carriers also filter texts with links, so delivery is less certain than push.
+- **Universal links.** The link in the text needs universal-link setup in the Expo app.
+- **Deletion.** The product-data deletion endpoint, and its tests, must cover the phone number, consent records, and any inbound replies.
+- Open details are question 30.
+
+## D046 — Catalog: one home country per dish, qualified names, no separate variant level
+
+- **Status:** Accepted (not implemented)
+- **Date:** 2026-11-17
+- **Confirms:** the one-home-country rule proposed in D039. **Amends:** D040
+
+### Decision
+
+- **One home country.** Every dish has exactly one home country for unlock purposes. This confirms the rule D039 proposed.
+- **Versions that differ are separate dishes.** A dish that many countries cook differently (for example fried rice) is not one entry. Each version is its own entry, told apart by a qualifier in its name ("Thai fried rice", "Yangzhou fried rice") or by the dish's own name ("nasi goreng"). Each has its own home country.
+- **Where the home country comes from.** It is where the dish, as named, was created. For a fusion dish it is where the fusion was created: miso carbonara's home country is Japan, because wafu pasta is a Japanese style.
+- **Cuisine tags.** A dish may carry several cuisine tags (miso carbonara: Japanese and Italian). Cuisine tags are D039's "secondary associations". They never unlock anything.
+- **No separate variant level.** What D040 called a variant (something that eats differently) becomes its own dish, with its own permanent ID and the variant detail in its name. Miso carbonara is its own dish, not a variant of carbonara.
+- **Optional base-dish link.** A dish may link to one base dish (miso carbonara → carbonara). The link is used only for ranking similarity. It never affects novelty or rewards.
+- **Unchanged from D040:** aliases (names only, no IDs); permanent IDs; a redirect from the old ID on merge; fact marking (generated, reviewed, or source-backed); catalog versioning.
+
+### Alternatives rejected
+
+- **One "fried rice" entry with many versions under it:** a single entry cannot have one home country when the versions come from different countries.
+- **Keeping a variant level under each dish (D040 as first written):** it needs a rule for whether a new variant is new to the user. Making each version its own dish answers that with the same rule as any other dish.
+- **Several home countries per dish:** a dish could then unlock more than one cosmetic, or the system would have to choose one at confirmation time.
+
+### Consequences
+
+- Trying a newly named version (miso carbonara after carbonara) is a personally-new dish for the North Star (D033) and gets a journal entry and a discovery moment. It unlocks a cosmetic only if its home country is new to the user (D039).
+- This answers open question 22 and the first part of open question 24. The catalog has no variant table.
+- Contested-origin cases (where the dish was created is disputed) are settled by the owner during review (D047).
+- Still open: how a menu line that names only a generic dish ("fried rice") is mapped when several qualified entries exist. D040's "do not guess" principle still applies, so the mapping rule must be decided (open question 1).
+
+## D047 — Catalog review: the owner reviews now; an agent review workflow later
+
+- **Status:** Accepted (not implemented) for the interim step. The later workflow is planned, not designed
+- **Date:** 2026-11-17
+- **Relates to:** D040, D041, D046
+
+### Decision
+
+- **Now:** the owner reviews catalog discrepancies by hand. A generated fact stays marked generated until the owner reviews it (D040). This includes contested-origin home countries (D046).
+- **Later:** review moves to a workflow of offline workers (agents), each reviewing one segment of the catalog, each with its own evaluation set (D041). The owner has asked for help setting this up. It is not designed yet.
+
+### Alternatives rejected
+
+- **Trusting generated facts without review:** D040 requires every fact to be marked, and an unreviewed fact must stay marked generated.
+- **Designing the agent workflow before the catalog exists:** there is nothing to segment or evaluate yet.
+
+### Consequences
+
+- The "who reviews generated facts" part of open question 17 is answered. Still open: the evaluation sets and pass marks for catalog generation and menu mapping, catalog version numbering, and the design of the agent review workflow.
+- The agent workflow runs offline only. It never runs at meal time (D041).
+
+## D048 — Earlier tester-readiness work goes into Milestones 5 and 6
+
+- **Status:** Accepted (not implemented)
+- **Date:** 2026-11-17
+- **Relates to:** D029, D030, D038
+
+### Decision
+
+- **No general offline write queue.**
+- **Milestone 5** (single-commit refactor, dish experience, rewards): an after-meal confirmation that has not reached the server is saved on the phone and retried with the same idempotency key until the server accepts it. Other writes are not queued. They fail visibly and the user can retry; mobile writes are already required to be idempotent.
+- **Milestone 6** (notification worker and meal area): the EAS/TestFlight build, with the bundle identifier `com.winstontang.nosh` (D029), and the Fly.io deployment (D030) happen here. Push notifications need a real build, and the worker needs a running server.
+- **Real app icons:** the owner creates them. They are needed before the first TestFlight build in Milestone 6.
+
+### Alternatives rejected
+
+- **A general offline queue for every write:** more work than the pilot needs. The confirmation is the one write that must not be lost.
+- **Building and deploying before Milestone 6:** nothing before the notification worker needs a real build or a hosted server.
+
+### Consequences
+
+- This answers open question 19.
+- Milestone 5 needs a stored, retried confirmation on the phone, with a test that a retry creates no second experience or reward (D038).
+
 ## Open questions
 
 These are not decided. Do not build on an assumed answer; raise the question and record the answer as a decision.
 
-1. **One home country per dish (D039).** Proposed, awaiting confirmation. Also open: how the home country is chosen for dishes with a contested or shared origin.
+Numbers are stable, because other documents refer to them. When a question is answered, it keeps its number and is marked **Answered by** the deciding entry; any part still open stays as open text.
+
+1. **One home country per dish (D039).** **Answered by D046 (2026-11-17):** each dish has exactly one home country, where the dish as named was created; versions cooked differently are separate, qualified dishes; contested origins are settled by the owner during review (D047). Still open: how a menu line that names only a generic dish ("fried rice") is mapped when several qualified entries exist. D040's "do not guess" principle applies; the rule must be decided before menu mapping (Milestone 2).
 2. **Budget (D043).** The monthly figure, pending the source experiment.
 3. **Sources (D042).** Which source or sources are used; the experiment's pass/fail thresholds (to be set before results); each source's rights to store, process, and display its content.
 4. **Live place status and opening hours (D034).** Which provider supplies them, and what its terms require of the card.
 5. **Map and handoff.** Which map the dish card shows and which maps app Go opens, now that D021 is superseded. The code opens Apple Maps.
-6. **Policy weights (D032).** The balance between familiar, adjacent, and broader-exploration suggestions; how "recent experience is concentrated" is measured; how fast suggestions widen toward other culinary regions.
+6. **Policy weights (D032).** Left open on purpose until the pilot shows what brings people back (D044). The balance between familiar, adjacent, and broader-exploration suggestions; how "recent experience is concentrated" is measured; how fast suggestions widen toward other culinary regions.
 7. **Restaurant quality.** Menu evidence does not establish quality, and Google ratings are not stored. What quality signal, if any, the dish policy uses is undecided.
 8. **Price ceiling (D026).** How the per-meal ceiling applies to dish offerings.
 9. **Response meanings for dishes.** What Another, Not today, and "Been here" teach the dish policy. D011 was written for restaurants.
 10. **Explicit constraints.** Which constraints onboarding collects (for example dietary ones) and how they are worded. The policy never overrides them, whatever they are.
 11. **Meal area (D035).** The size of the coarse cell, how the user confirms or changes the area, how long it is kept, and whether the saved Home/Work spots remain.
-12. **Notifications (D035).** Send time relative to the meal window, what a dish-naming notification may show, and whether it offers actions.
+12. **Notifications (D035, D044).** The pilot starts with a nudge about 15 minutes before the scheduled eating time, as a hypothesis to test (D044); the lasting send time is open. Also open: what a dish-naming notification may show, and whether it offers actions.
 13. **"I ate something else" (D037).** How the user picks the actual dish at confirmation, and what happens when it is not in the catalog.
-14. **Active user (D033).** The period that defines "active" for the North Star, and any target values.
+14. **Active user (D033, D044).** The period that defines "active", how "week two" is counted for each participant, and any target values for either measure.
 15. **Legacy screens (D036).** What the app shows for frozen restaurant history, and when the visit and place-state write endpoints are retired.
 16. **Avatar and journal (D039).** What the avatar and its cosmetics are, and what a journal entry contains.
-17. **Catalog process (D040, D041).** Who reviews generated facts, the evaluation sets and their pass marks for catalog generation and menu mapping, and how catalog versions are numbered.
+17. **Catalog process (D040, D041).** Who reviews generated facts: **answered by D047 (2026-11-17)** — the owner, by hand, for now. Still open: the evaluation sets and their pass marks for catalog generation and menu mapping, how catalog versions are numbered, and the design of the later agent review workflow (D047).
 18. **Sign-in identity deletion.** Deleting an account should also delete the sign-in identity; the mechanism is not designed (today only product data is deleted).
-19. **Earlier tester-readiness work.** Where the unfinished items from the old Milestone 3 (offline write queue, EAS/TestFlight build, real icons) and the Fly.io deployment (D030) fall in the new milestone order.
+19. **Earlier tester-readiness work.** **Answered by D048 (2026-11-17):** no general offline write queue; Milestone 5 stores and retries an unsent after-meal confirmation; Milestone 6 has the EAS/TestFlight build and the Fly.io deployment (D030); the owner makes real icons before the first TestFlight build.
 20. **Initial dish preferences (cold start).** What onboarding asks about dishes, and how those answers shape suggestions for a new user who has no dish experiences yet.
 21. **Repetition.** Whether the same dish, or the same branch, may be proposed again within a session or in back-to-back meal windows.
-22. **Variants and the North Star (D033, D039).** Whether trying a new variant of a dish the user has already had counts as a personally-new dish. D039 gives it a journal entry and a discovery moment but does not say.
+22. **Variants and the North Star (D033, D039).** **Answered by D046 (2026-11-17):** there is no variant level; a newly named version (miso carbonara after carbonara) is its own dish, so it counts as a personally-new dish and gets a journal entry and a discovery moment. It unlocks a cosmetic only if its home country is new to the user.
 23. **Nothing eligible.** What the user sees when no published offering is eligible, and whether any rule may be relaxed. Explicit constraints may not.
-24. **Planned schema details.** How variants are represented relative to dishes (D040); how a system-superseded proposal and its reason are recorded, separate from user responses (D037); whether appended corrections live on the dish experience or in a separate event structure (D038); and whether dish proposals keep filling the existing `proposals.place_id` and `cuisine_id` columns or those columns become nullable (the new offering reference itself is decided, D032).
+24. **Planned schema details.** How variants are represented relative to dishes: **answered by D046 (2026-11-17)** — no variant level; each version is its own dish with an optional link to one base dish. Still open: how a system-superseded proposal and its reason are recorded, separate from user responses (D037); whether appended corrections live on the dish experience or in a separate event structure (D038); and whether dish proposals keep filling the existing `proposals.place_id` and `cuisine_id` columns or those columns become nullable (the new offering reference itself is decided, D032).
 25. **Offerings and purged content (D034).** What happens to a published offering when the provider content behind it expires or is purged, and which data class an offering belongs to.
+26. **Scheduled eating time (D044).** The meal schedule stores a window with a start and an end. Whether "scheduled eating time" is the window's start, a new single time the user sets, or something else.
+27. **Preparing the pick (D044).** How long before the meal the suggestion is prepared, how long a prepared pick stays valid, and what the user sees if they open the app before one exists.
+28. **Counting first-pick meals (D044).** The exact rule: which sessions are in the denominator, and how a first suggestion that the system replaced before the user saw it is treated.
+29. **Pilot conversations (D044).** Where the answers are recorded, how they are linked to a participant's meals, and what participants are told beforehand.
+30. **Text messages (D045).** Whether D045 is accepted; whether SMS is in the San Mateo pilot or later; which provider; registration route (10DLC or toll-free); who pays and the monthly limit (with D043); the default channel for a new user; whether keyword replies are ever offered; and quiet hours.

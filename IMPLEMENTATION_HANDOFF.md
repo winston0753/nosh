@@ -1,7 +1,7 @@
 # Nosh Implementation Handoff
 
-- **Last updated:** 2026-11-10
-- **Direction:** dish-first pivot (D032–D043). **None of it is implemented yet.**
+- **Last updated:** 2026-11-17
+- **Direction:** dish-first pivot (D032–D043, with later additions D044–D048). **None of it is implemented yet.**
 
 This file tells the next person (or Claude session) what exists, what has been agreed but not built, and what is only history. It keeps those three apart on purpose:
 
@@ -31,12 +31,17 @@ Treat these root documents as authoritative:
 
 If anything here disagrees with `DECISIONS.md`, `DECISIONS.md` wins. Material under `docs/` is historical research and never overrides the root documents.
 
-## Where things stand (2026-11-10)
+## Where things stand (2026-11-17)
 
 **Confirm this against Git before acting on it.** Run `git status`, `git log --oneline -5`, and `gh pr list`. This text is a snapshot and goes stale.
 
-- `main` is at `8422298`. PRs #1–#6 are merged; PR #6 was the meal schedule. No open PRs are known.
-- The pivot documents (this file, `DECISIONS.md`, and the other root documents) are on branch `docs/dish-first-pivot`, **uncommitted**, awaiting the owner's review. This is a docs-only change: no code, migrations, tests, or mobile files were changed.
+### Where the last session left off
+
+- `main` is at `ec69a9e`. PRs #1–#7 are merged; PR #7 was the dish-first pivot documents.
+- A follow-up docs change (D044–D048 and the pilot-data note below) is going to `main` as a new PR from the same branch, `docs/dish-first-pivot`. It is docs and gathering skills only: no code, migrations, tests, or mobile files were changed.
+- **Pilot data set (local only).** A crawl of restaurants' own sites exists on the owner's machine under `data/pilot/`. It is gitignored and **not in the repository**. The skills that gather it are committed in `.claude/skills/` (`gather-neighborhood` for one area, `gather-all` for every area still to do). Summary: 14 areas, 500 restaurants with menus, about 50,600 menu lines. About 120 restaurants need manual capture, and 9 areas are below their target of 40 restaurants; the owner has deferred both.
+- All of the pilot data is **generated, unreviewed** crawl data. It is relevant to Milestone 2 (the San Mateo hand-verified index, and the "crawling restaurants' own sites" arm of the source experiment), but it is **not** the hand-verified index and nothing has been published from it.
+- The owner has set aside D045 (text messages as a second channel). It stays proposed; do not build on it.
 - The repository has no branch protection. The owner reviews and merges PRs on GitHub. `gh` is installed and logged in.
 - Test counts are not written here. Run the checks in `README.md` to see the current state.
 
@@ -52,7 +57,7 @@ The code on `main` is a working **local** prototype of the **old, restaurant-sha
 |---|---|
 | 1 — Repository and backend foundation | Complete |
 | 2 — Deterministic suggestion API | Complete |
-| 3 — Expo vertical slice | Partially complete: the local slice works; tester-readiness work was never done |
+| 3 — Expo vertical slice | Partially complete: the local slice works; tester-readiness work was never done (D048 now places it in new Milestones 5 and 6) |
 | 4 — Notifications and private-cohort readiness | Not started, beyond two tables (`device_tokens`, `notification_deliveries`) |
 
 ### What the code does (verified against source on 2026-11-10)
@@ -87,15 +92,17 @@ The full route and table detail lives in `ARCHITECTURE.md`. Do not recreate any 
 
 ## Part B — Accepted but not implemented
 
-The milestone order and the first target are recorded in D032; the decisions each milestone implements are D032–D043. Two parts are not yet agreed: the budget (D043 is open) and the one-home-country rule (part of D039, proposed). **None of it exists in code.** Each milestone is a reviewable change or small series of changes. No implementation starts until the owner asks.
+The milestone order and the first target are recorded in D032; the decisions each milestone implements are D032–D048. Not yet agreed: the budget (D043 is open) and text messages as a channel (D045, proposed and set aside). The one-home-country rule from D039 is now accepted (D046). **None of it exists in code.** Each milestone is a reviewable change or small series of changes. No implementation starts until the owner asks.
 
 Where a milestone touches something still undecided, it names the open question by its number in the `DECISIONS.md` Open questions list. Do not build on an assumed answer.
 
 ### New milestones
 
+The milestones are an ordered queue. Work goes in this order; Milestone 1 is next.
+
 | # | Milestone | Status |
 |---|---|---|
-| 1 | Catalog schema, identity rules, seed, evaluation set | Not started |
+| 1 | Catalog schema, identity rules, seed, evaluation set | Not started — next |
 | 2 | Branch and offering tables with the San Mateo hand-verified index; source experiment in parallel | Not started |
 | 3 | Dish onboarding and profile | Not started |
 | 4 | Dish ranking with an additive proposals migration | Not started |
@@ -103,20 +110,24 @@ Where a milestone touches something still undecided, it names the open question 
 | 6 | Notification worker and meal area | Not started |
 | 7 | Minimal journal and avatar | Not started |
 
+Also queued, after Milestone 1 lays down the catalog: **design the agent catalog-review workflow** (D047). It is not designed yet; until it exists the owner reviews catalog discrepancies by hand.
+
 #### 1 — Catalog schema, identity rules, seed, evaluation set
 
-**What it is.** The shared dish catalog: Nosh's own list of dishes. It has three levels. A **dish** (for example, ramen). A **variant**, which eats differently (a regional style, a different main protein, or a different preparation). An **alias**, which is just another name.
+**What it is.** The shared dish catalog: Nosh's own list of dishes. Each entry is a **dish** with a permanent ID. There is no separate variant level (D046): a version that eats differently is its own dish, named with a qualifier ("Thai fried rice", "Yangzhou fried rice") or by its own name ("nasi goreng"). An **alias** is just another name for a dish.
 
-**Implements:** D040, D041, and the "shared catalog" data class in D034.
+**Implements:** D040 as amended by D046, D041, D047 (interim review), and the "shared catalog" data class in D034.
 
 **Done looks like:**
 
-- Catalog tables covering dishes, variants (one level deep), and aliases; only dishes and variants have IDs. How a variant is stored relative to its dish is open (question 24).
+- Catalog tables for dishes and aliases. No variant table. Only dishes have IDs.
+- Each dish has exactly one home country: where the dish, as named, was created (for a fusion dish, where the fusion was created). A dish may carry several cuisine tags, which never unlock anything (D046).
+- A dish may carry an optional link to one base dish (miso carbonara → carbonara), used only for ranking similarity, never for novelty or rewards (D046).
 - IDs are permanent. A merge leaves a redirect from the old ID. A split never moves a user's past experiences.
 - Every catalog fact is marked generated, reviewed, or source-backed, and the catalog is versioned.
 - A first seed of the catalog is loaded. (The long-term target is about 10,000 dishes, built as an intentional workstream with the founder hands-on.)
-- An evaluation set exists for offline LLM catalog generation. Who reviews, the pass marks, and version numbering are open (question 17).
-- Nothing depends on the one-home-country rule until it is confirmed (D039, question 1).
+- An evaluation set exists for offline LLM catalog generation. Its contents and pass mark, and version numbering, are open (question 17); settle them before or during this milestone.
+- Generated facts stay marked generated until the owner reviews them by hand (D047). Contested-origin home countries are settled by the owner in that review (D046).
 
 #### 2 — Branch and offering tables with the San Mateo hand-verified index; source experiment in parallel
 
@@ -131,6 +142,8 @@ Where a milestone touches something still undecided, it names the open question 
 - A hand-verified index of published offerings for downtown San Mateo.
 - In parallel, the source-comparison experiment: about 40 restaurants (10 each in San Mateo, San Francisco, San Jose, and New York City) run through each vendor trial and through crawling restaurants' own sites. Pass/fail thresholds are written down **before** any results are looked at (question 3).
 - Datafiniti, MealMe, and RelevantData are candidates only. No source is selected, and no vendor's rights, prices, or coverage are assumed.
+- Menu mapping needs a rule for a menu line that names only a generic dish ("fried rice") when several qualified dishes exist. Nothing is guessed (D040); the rule is open (question 1) and must be decided before mapping.
+- The local pilot crawl under `data/pilot/` (see "Where the last session left off") is input for this milestone, not its output: it is generated and unreviewed.
 
 #### 3 — Dish onboarding and profile
 
@@ -171,9 +184,11 @@ Where a milestone touches something still undecided, it names the open question 
 - Application services no longer commit on their own; each request commits once.
 - Confirming a meal is one operation: it writes the dish experience, checks whether the dish is new to the user while holding a per-user lock, and inserts any rewards so that a retry cannot create a second one.
 - The user can say they ate something else. How they pick the actual dish, and what happens if it is not in the catalog, is open (question 13).
+- The record shows whether the dish eaten was the first one suggested for that meal, so confirmed first-pick meals can be counted (D044). The counting rule is open (question 28).
 - Tried and enjoyed are recorded separately. Changing "enjoyed" never changes a reward. Changing which dish was eaten re-evaluates both dishes. Retracting an experience invalidates its reward. Corrections are appended, not overwritten.
 - Go is final for the window; if an accepted offering goes stale, the user sees a notice (D037).
-- An immediate discovery moment after confirmation. Whether a new variant counts as a personally-new dish is open (question 22), as is where appended corrections are stored (question 24).
+- An immediate discovery moment after confirmation. A newly named version of a familiar dish (miso carbonara after carbonara) is its own dish and counts as personally new (D046). Where appended corrections are stored is open (question 24).
+- An after-meal confirmation that has not reached the server is saved on the phone and retried with the same idempotency key until the server accepts it (D048). There is no general offline write queue: other writes fail visibly and the user can retry. A test shows a retried confirmation creates no second experience or reward.
 - Legacy restaurant visits and place states stay as frozen, read-only history: no dish backfill, no retrospective rewards (D036). What the app shows for them is open (question 15).
 - The map and handoff for Go are open (question 5); the code currently opens Apple Maps.
 
@@ -181,13 +196,17 @@ Where a milestone touches something still undecided, it names the open question 
 
 **What it is.** Scheduled delivery. A **meal area** is roughly where the user will be for a meal, confirmed by the user and stored as a coarse cell (an area), never as a point.
 
-**Implements:** D035 (superseding D023, amending D017 and D020), with D010 unchanged.
+**Implements:** D035 (superseding D023, amending D017 and D020) and D044, with D010 unchanged.
 
 **Done looks like:**
 
 - The user confirms a meal area per meal; it is stored as a coarse cell and covered by deletion.
 - When the app opens, foreground location revalidates the area. No background location, geofencing, or continuous tracking.
+- The pick for a meal is prepared ahead, so it is already there if the user opens Nosh before the notification (D044). How far ahead, and how long it stays valid, is open (question 27).
+- For the pilot the nudge goes out about 15 minutes before the scheduled eating time. This is a hypothesis to test, so the timing must be easy to change (D044). What "scheduled eating time" means is open (question 26).
 - A notification worker in the same backend codebase sends deduplicated, schedule-aware notifications. It names a dish only when a meal area exists; otherwise it sends a generic nudge.
+- The first EAS/TestFlight build, with the bundle identifier `com.winstontang.nosh` (D029), and the Fly.io deployment (D030). Push needs a real build and the worker needs a running server (D048).
+- Real app icons, made by the owner, are in place before that first TestFlight build (D048).
 - Open: cell size, how the area is confirmed or changed, how long it is kept, and whether Home/Work spots remain (question 11); send time, what a dish-naming notification may show, and whether it has actions (question 12).
 
 #### 7 — Minimal journal and avatar
@@ -198,10 +217,10 @@ Where a milestone touches something still undecided, it names the open question 
 
 **Done looks like:**
 
-- A new dish, or a new variant, gets a journal entry and a discovery moment, but no cosmetic.
-- A cosmetic unlocks only when the user tries a dish from a country new to them.
+- A dish new to the user, including a newly named version of a familiar dish, gets a journal entry and a discovery moment (D039, D046).
+- A cosmetic unlocks only when the user tries a dish whose home country is new to them. Cuisine tags never unlock anything (D046).
 - The avatar is always computed from currently valid rewards, so a retraction removes its cosmetic.
-- What the avatar, its cosmetics, and a journal entry are is open (question 16). The one-home-country rule is proposed, not confirmed (question 1). Whether a new variant counts toward the North Star is open (question 22).
+- What the avatar, its cosmetics, and a journal entry are is open (question 16).
 
 ### Definition of MVP done
 
@@ -218,7 +237,7 @@ The MVP is done when a private tester can complete the first loop on their own p
 9. See an immediate discovery reward when the dish is new to them.
 10. See their updated profile, a journal entry, and the minimal avatar.
 11. Correct or retract a confirmation later, with rewards and the avatar following the facts.
-12. View progress on confirmed personally-new dishes tried.
+12. View progress on confirmed personally-new dishes tried. (The pilot's main measure, confirmed first-pick meals, is calculated by the owner from recorded events; it is not a user-facing screen, D044.)
 13. Change notification settings or delete their product data.
 
 Throughout, the tester never receives an offering that is unpublished, ineligible by live status, or in breach of a constraint they stated. Details that are still open questions in `DECISIONS.md` are not part of this definition until decided.
@@ -247,8 +266,8 @@ Kept so readers understand the code. **Do not build from this part.**
 3. Meal schedule, price ceiling, Home/Work spots, Been here already (D020, D025, D026) — done 2026-10-25.
 4. Google Places provider plus a fixture provider, and `policy_v1` with a price-ceiling filter — **superseded before implementation**: Google Places end to end (D021) and the store-only-IDs supply model (D022) by D034; `policy_v1` (D024) by D032. The step's prerequisite, how a visit gets a cuisine label, was answered by D031, itself superseded before implementation by D032/D034 (cuisine now comes from the catalog, D040).
 5. Current-location flow, Home/Work setup, Google map, Google Maps handoff — **superseded**: the location basis is the meal area (D035); the map and handoff choice is open (question 5).
-6. Persist session/proposal IDs and queue idempotent writes — **not done; still relevant**. Where it falls in the new order is open (question 19).
-7. EAS development/TestFlight build, real bundle identifier, real icons — **not done; still relevant**. Bundle identifier `com.winstontang.nosh` is decided (D029). Placement is open (question 19).
+6. Persist session/proposal IDs and queue idempotent writes — **not done; replaced by D048**: no general queue; Milestone 5 stores and retries an unsent after-meal confirmation.
+7. EAS development/TestFlight build, real bundle identifier, real icons — **not done; placed by D048** in Milestone 6, with the Fly.io deployment. Bundle identifier `com.winstontang.nosh` is decided (D029); the owner makes the icons.
 
 Location-free notifications (D023) are superseded by D035. The ~$50/month budget (D028) is superseded by D043, which leaves the figure open.
 
@@ -278,15 +297,17 @@ These match `DECISIONS.md`. They apply to all new work.
 
 ## Next
 
-**No implementation starts until the owner asks.** Before Milestone 1, the owner should settle, or explicitly defer, these items from the Open questions list in `DECISIONS.md`:
+**No implementation starts until the owner asks.** Milestone 1 is next.
 
-- **One home country per dish** (question 1, D039 — proposed, awaiting confirmation). The catalog must not depend on it until confirmed.
-- **Source-experiment thresholds** (question 3, D042). The pass/fail thresholds must be written down before any experiment results are looked at, so they need to be agreed before Milestone 2's experiment starts.
-- **Catalog process** (question 17): who reviews generated facts, and the evaluation sets and pass marks.
-- **How variants are stored** (the first part of question 24): Milestone 1's tables depend on it.
-- **Earlier tester-readiness work** (question 19): where the offline write queue, the EAS/TestFlight build, real icons, and the Fly.io deployment (D030) fall in the new milestone order.
+Settled on 2026-11-17: one home country per dish and no variant level (questions 1, 22, and the first part of 24; D046); who reviews generated facts (the reviewer part of question 17; D047); and where the earlier tester-readiness work goes (question 19; D048).
 
-The other open questions (map and handoff, policy weights, quality signal, price ceiling, response meanings, constraints, meal area, notifications, "I ate something else", active user, legacy screens, avatar and journal, sign-in identity deletion, budget, and questions 20–25 apart from the variant part of 24) can be settled when the milestone that needs them comes up. Each milestone above names the ones it touches.
+Still to settle, before or during the milestone that needs it:
+
+- **Milestone 1's evaluation set and pass mark** (the rest of question 17): what the catalog-generation evaluation set contains and what score it must reach. Catalog version numbering is part of the same question.
+- **Generic menu lines** (the rest of question 1): how a menu line that names only a generic dish ("fried rice") is mapped when several qualified dishes exist. Needed by Milestone 2's menu mapping.
+- **Source-experiment thresholds** (question 3, D042). The pass/fail thresholds must be written down before any experiment results are looked at, so before Milestone 2's experiment. The local pilot crawl already exists, so the thresholds should be written down before anyone analyses that data as experiment evidence.
+
+The other open questions (map and handoff, policy weights, quality signal, price ceiling, response meanings, constraints, meal area, notifications, "I ate something else", active user, legacy screens, avatar and journal, sign-in identity deletion, budget, text messages, and questions 20–30 apart from those above) can be settled when the milestone that needs them comes up. Each milestone above names the ones it touches.
 
 ---
 
@@ -328,7 +349,7 @@ Never commit these files or print their values.
 
 - Explain in plain, non-technical language. Short sentences.
 - Commit, push, and open PRs only when asked.
-- Leave the untracked `.agents/`, `skills-lock.json`, `research_notes/`, and `reports/` alone.
+- `.agents/`, `skills-lock.json`, `research_notes/`, `reports/` and `data/pilot/` are local working material, gitignored on 2026-11-17. Keep them on disk; do not commit or delete them.
 - When something is unclear, ask, or propose an entry in `DECISIONS.md`. Do not decide silently.
 
 ### Engineering expectations

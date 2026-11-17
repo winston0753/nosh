@@ -1,5 +1,37 @@
 # Project Notes
 
+## 2026-11-17 — Catalog shape, review, and tester-readiness placement (D046–D048, docs only)
+
+Branch `docs/dish-first-pivot`, after PR #7 (the pivot documents) merged into `main` at `ec69a9e`. This follow-up goes to `main` as a new PR. **No application code, migration, test, or mobile file changed.**
+
+- **D046 (Accepted, not implemented):** each dish has exactly one home country (confirms D039's proposed rule): where the dish, as named, was created; for a fusion dish, where the fusion was created (miso carbonara → Japan). Versions cooked differently are separate dishes with qualified names ("Thai fried rice", "Yangzhou fried rice", "nasi goreng"). Several cuisine tags per dish, which never unlock anything. No separate variant level: what D040 called a variant is its own dish with its own permanent ID, with an optional link to one base dish used only for ranking similarity. Amends D040.
+- **D047 (Accepted, not implemented):** the owner reviews catalog discrepancies by hand for now; a later workflow of offline review agents, each with its own evaluation set, is planned but not designed.
+- **D048 (Accepted, not implemented):** no general offline write queue. Milestone 5 saves an unsent after-meal confirmation on the phone and retries it with the same idempotency key. Milestone 6 has the EAS/TestFlight build and the Fly.io deployment. The owner makes real icons before the first TestFlight build.
+- **Open questions answered:** 19 and 22 in full; 1 (one home country), 17 (who reviews), and 24 (how variants are stored) in part. Still open: how a menu line naming only a generic dish is mapped (rest of 1); evaluation sets, pass marks, version numbering, and the agent workflow design (rest of 17). Question 3's thresholds must be written down before the pilot crawl is analysed as experiment evidence.
+- **Pilot data:** gathered locally under `data/pilot/` and gitignored, so it is not in the repository. The gathering skills are committed in `.claude/skills/` (`gather-neighborhood`, `gather-all`). 14 areas, 500 restaurants with menus, about 50,600 menu lines; all generated, unreviewed crawl data from restaurants' own sites, not the hand-verified index. About 120 restaurants needing manual capture, and 9 areas below their 40 target, are deferred by the owner.
+- **D045** (text messages) stays proposed and set aside.
+- **Files:** DECISIONS.md (D046–D048; D029, D030, D034, D039, D040 status or wording; questions 1, 17, 19, 22, 24), PRODUCT.md, ARCHITECTURE.md, RECOMMENDATIONS.md, IMPLEMENTATION_HANDOFF.md, AGENTS.md, CLAUDE.md, notes.md.
+
+## 2026-11-16 — Text messages proposed as a delivery channel (D045, docs only)
+
+Not committed. **No application code, migration, test, or mobile file changed.**
+
+- **D045 (Proposed, awaiting confirmation):** SMS as a second delivery channel of the planned notification worker, not a separate feature. Push comes first in milestone 6, with a channel field designed in from the start; SMS starts one-way with a link into the app; keyword replies, if ever added, follow D037, D038 and D041; the phone number is personal data (verified, never logged, deleted with product data); explicit opt-in with STOP/HELP.
+- **Not checked:** SMS provider prices and registration timelines. No cost figure is assumed (D043 is still open).
+- **New open question:** 30 (SMS details).
+- **Files:** DECISIONS.md (D045, question 30, last-updated date), PRODUCT.md (question 30), notes.md.
+
+## 2026-11-12 — Pilot promise and measures (D044, docs only)
+
+Not committed. **No application code, migration, test, or mobile file changed.**
+
+- **Promise:** "When lunch crosses your mind, Nosh already has one specific dish at a nearby restaurant worth saying yes to."
+- **Agreed:** the pick is ready before the notification; Go, Another, Not today, and the after-meal confirmation stay, with no recurring questions added; one pilot conversation question per participant; the main behavioural measure is confirmed first-pick meals, including week two; a dish the person had already chosen is a taste match, kept apart from a decision Nosh helped make; D033 stays as the separate discovery measure; the familiar/new balance stays open.
+- **Assumptions to test:** the nudge about 15 minutes before the scheduled eating time; that first-pick meals are the right measure; that one conversation is enough.
+- **New open questions:** 26 (what "scheduled eating time" means), 27 (when the pick is prepared), 28 (how first-pick meals are counted), 29 (how pilot conversations are recorded).
+- **Unchanged:** pilot area and scope (D042) and everything deferred.
+- **Files:** DECISIONS.md (D044; D033 and D035 status lines; questions 6, 12, 14, 26–29), PRODUCT.md, RECOMMENDATIONS.md, ARCHITECTURE.md, IMPLEMENTATION_HANDOFF.md, AGENTS.md, CLAUDE.md.
+
 ## 2026-11-10 — Dish-first pivot recorded (docs only, branch `docs/dish-first-pivot`)
 
 Started from `main` at `8422298` (PR #6, meal schedule, merged). Not committed. **No application code, migration, test, or mobile file changed.** Everything below is a decision or a plan; none of it is implemented.
