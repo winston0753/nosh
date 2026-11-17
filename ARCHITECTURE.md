@@ -2,9 +2,9 @@
 
 - **Status:** Phase-one baseline, being reconciled with the dish-first pivot
 - **Version:** 0.2
-- **Last updated:** 2026-11-10
+- **Last updated:** 2026-11-17
 
-> **Read this first.** On 2026-11-10 Nosh pivoted from suggesting "one nearby unvisited restaurant" to suggesting "one specific dish at a specific restaurant branch" (DECISIONS.md D032–D043). **Everything this document labels "Planned" does not exist yet.** No part of D032–D043 is implemented. The code on `main` still suggests restaurants from 20 fictional San Francisco fixture places using `policy_v0`.
+> **Read this first.** On 2026-11-10 Nosh pivoted from suggesting "one nearby unvisited restaurant" to suggesting "one specific dish at a specific restaurant branch" (DECISIONS.md D032–D043, with later additions D044–D048). **Everything this document labels "Planned" does not exist yet.** No part of D032–D048 is implemented. The code on `main` still suggests restaurants from 20 fictional San Francisco fixture places using `policy_v0`.
 >
 > This document keeps three things apart:
 >
@@ -194,7 +194,7 @@ Planned (not implemented):
 - Notification registration and deep links
 - Actual-dish confirmation, including "I ate something else" (D037; open question 13)
 - Discovery moment, journal, and avatar (D039)
-- Local persistence of session and proposal identifiers and a queue of idempotent writes for network failures
+- Local persistence of session and proposal identifiers. No general offline write queue (D048): an after-meal confirmation that has not reached the server is saved on the phone and retried with the same idempotency key until accepted (Milestone 5); other writes fail visibly and the user can retry
 
 The mobile client contains presentation logic, not recommendation logic.
 
@@ -207,13 +207,13 @@ Planned: rank published dish offerings, record dish experiences and rewards in o
 ### Scheduler/worker (planned, not implemented)
 
 - Find users whose meal windows are approaching.
-- Prepare one dish proposal when the user has a meal area; otherwise send a generic nudge (D035).
+- Prepare one dish proposal when the user has a meal area; otherwise send a generic nudge (D035). The proposal is prepared ahead of the notification, so it is already there if the user opens the app first (D044).
 - Send at most one meal-time notification per user and meal window, deduplicated.
 - Create due confirmation prompts.
 - Retry transient failures with bounded backoff.
 - Ignore disabled meals and deleted users.
 
-The send time, what a dish-naming notification may show, and whether it offers actions are open (open question 12). The first worker may poll PostgreSQL on a short interval; no message broker is needed at this scale.
+The pilot starts with a nudge about 15 minutes before the scheduled eating time, as a hypothesis, so the send time must be configurable (D044). The lasting send time, what a dish-naming notification may show, and whether it offers actions are open (open questions 12, 26, and 27). The first worker may poll PostgreSQL on a short interval; no message broker is needed at this scale.
 
 ### Recommendation module
 
@@ -415,7 +415,7 @@ Nothing writes to `device_tokens` or `notification_deliveries` today.
 
 ### 7.2 Planned (not implemented)
 
-> None of the tables in this section exist. They are the minimum set implied by D032–D040. Column-level design is not done; only purposes are described. All are created by additive migrations with tested downgrades, so existing data stays readable (D036).
+> None of the tables in this section exist. They are the minimum set implied by D032–D040, with the catalog shape set by D046. Column-level design is not done; only purposes are described. All are created by additive migrations with tested downgrades, so existing data stays readable (D036).
 
 **Three data classes (D034).** Every planned table except `dish_offering` (see below; open question 25) belongs to exactly one class:
 
@@ -427,9 +427,9 @@ Nothing writes to `device_tokens` or `notification_deliveries` today.
 
 #### Shared catalog
 
-- **`dish`** — the catalog's dishes and their variants (D040; how a variant is stored relative to its dish is open question 24). Dishes and variants have permanent IDs. Variants are one level deep: a variant is something that eats differently (a regional style, a different main protein, a different preparation). Merging two entries leaves a redirect from the old ID; splitting never moves a user's past experiences. The catalog is versioned. Cuisine comes from here, which replaces per-place cuisine labels for dish work. The target size is about 10,000 dishes.
-- **`dish_alias`** — other names for a dish or variant (D040). Aliases have no IDs of their own: a name is not a different thing to eat. Used when mapping menu text to the catalog.
-- **`dish_trait`** — facts about a dish or variant, such as its home country or ingredients (D040). Every fact is marked as generated, reviewed, or source-backed. The rule that each dish has exactly one home country for unlock purposes is **proposed, awaiting confirmation** (D039, open question 1); the catalog must not depend on it until confirmed.
+- **`dish`** — the catalog's dishes (D040, amended by D046). Each dish has a permanent ID. There is no variant level and no variant table: a version that eats differently is its own dish, told apart by a qualifier in its name ("Thai fried rice", "Yangzhou fried rice") or by its own name ("nasi goreng"). A dish may carry an optional link to one base dish (miso carbonara → carbonara); the link is used only for ranking similarity and never affects novelty or rewards. Merging two dishes leaves a redirect from the old ID; splitting never moves a user's past experiences. The catalog is versioned. Cuisine comes from here, which replaces per-place cuisine labels for dish work. The target size is about 10,000 dishes.
+- **`dish_alias`** — other names for a dish (D040). Aliases have no IDs of their own: a name is not a different thing to eat. Used when mapping menu text to the catalog.
+- **`dish_trait`** — facts about a dish, such as its home country, its cuisine tags, or its ingredients (D040, D046). Each dish has exactly one home country for unlock purposes: where the dish, as named, was created (for a fusion dish, where the fusion was created). A dish may have several cuisine tags; they never unlock anything (D039, D046). Every fact is marked as generated, reviewed, or source-backed, and a generated fact stays marked generated until the owner reviews it (D047). Whether home country and cuisine tags are stored here or as columns on `dish` is part of the column design, which is not done.
 
 #### Branch registry and provider content
 
@@ -438,13 +438,13 @@ Nothing writes to `device_tokens` or `notification_deliveries` today.
 
 #### Published offerings
 
-- **`dish_offering`** — the published link "this branch serves this dish (or variant)", created only after mapping and review (D034). Meal-time ranking reads only published offerings. Anything specific to how one restaurant prepares a dish lives here, not in the catalog (D040). A menu item that names only the dish is linked at dish level, not guessed into a variant.
+- **`dish_offering`** — the published link "this branch serves this dish", created only after mapping and review (D034). Meal-time ranking reads only published offerings. Anything specific to how one restaurant prepares a dish lives here, not in the catalog (D040). A menu item is never guessed into a more specific dish; how a menu line that names only a generic dish ("fried rice") is mapped when several qualified dishes exist is open question 1.
 
 #### Personal data
 
 - **`user_dish_preference`** — what the user tells Nosh in dish onboarding, including explicit constraints the policy must never override (D032). What onboarding asks is not decided (open questions 10 and 20).
 - **`dish_experience`** — the record that the user actually ate a dish at a branch, with "tried" and "enjoyed" as separate signals (D033, D038). It is the source of truth for novelty ("is this new to me?") and for taste evidence, which is derived from it rather than stored separately. Corrections are appended as new events; earlier records are not overwritten. Changing which dish was eaten re-evaluates both dishes; retracting an experience invalidates its reward.
-- **`reward`** — a discovery reward earned from a dish experience (D038, D039). Inserted idempotently, so a retry cannot create a second reward. Each reward is individually valid or invalid; changing whether the dish was enjoyed never changes a reward. A cosmetic unlocks only for a dish from a country new to the user; a new dish or variant earns a journal entry and discovery moment, not a cosmetic.
+- **`reward`** — a discovery reward earned from a dish experience (D038, D039). Inserted idempotently, so a retry cannot create a second reward. Each reward is individually valid or invalid; changing whether the dish was enjoyed never changes a reward. A dish new to the user (including a newly named version of a familiar dish, D046) earns a journal entry and a discovery moment; a cosmetic unlocks only when the dish's home country is also new to the user.
 - **Avatar — computed, not stored (D039).** The avatar is always computed from the currently valid rewards, so a retraction removes a cosmetic. There is no avatar table.
 
 #### Changes to an existing table
@@ -456,7 +456,6 @@ Nothing writes to `device_tokens` or `notification_deliveries` today.
 These structures are needed but not decided. No table is added for them here.
 
 - **Where the meal area is stored (D035).** It is a coarse cell, never a point. Cell size, confirmation, and retention are open question 11.
-- **How variants are represented in `dish`** — for example, a parent reference on the same table or a separate structure (D040). Not decided (open question 24).
 - **How system supersession of a proposal is recorded (D037)** — it must be distinct from user responses and carry a reason (open question 24).
 - **How appended correction events for dish experiences are stored (D038)** — on `dish_experience` itself or in a separate event structure (open question 24).
 - **How catalog merge redirects and catalog versions are stored (D040).** Version numbering is open question 17.
@@ -716,6 +715,8 @@ Planned additions: notification deduplication; single-commit confirmation with i
 
 ### Production/TestFlight (planned)
 
+D048 places the first EAS/TestFlight build and the Fly.io deployment in Milestone 6 (notification worker and meal area), because push needs a real build and the worker needs a running server. The owner creates real app icons before that first build.
+
 - separate Supabase project with PostGIS
 - API on Fly.io, connecting through Supabase's direct or session connection (not the transaction pooler); `alembic upgrade head` as a release step (D030)
 - migration-only database changes through CI/CD
@@ -770,16 +771,15 @@ Still open: which map the dish card shows and which maps app Go opens (open ques
 
 ## 23. Open questions
 
-These are not decided. The canonical list is "Open questions" in DECISIONS.md; the numbers below refer to it.
+These are not decided. The canonical list is "Open questions" in DECISIONS.md; the numbers below refer to it. Questions 19 and 22 are answered (D048, D046) and no longer listed here.
 
 - Live place status/hours provider and its terms (4); map and handoff (5).
 - Sources and their rights (3); budget (2).
 - Policy weights, restaurant quality signal, price ceiling, and response meanings for dishes (6–9).
 - Explicit constraints (10); meal area cell size, confirmation, retention, and Home/Work spots (11); notifications (12); "I ate something else" (13).
-- One home country per dish (1); avatar and journal content (16); catalog review process, evaluation sets, and version numbering (17).
+- Generic menu lines: how a menu line that names only a generic dish ("fried rice") is mapped when several qualified dishes exist (remainder of 1; the one-home-country rule itself is answered by D046). Avatar and journal content (16). Catalog evaluation sets and pass marks, version numbering, and the design of the later agent review workflow (remainder of 17; who reviews is answered by D047).
 - Legacy screens and retiring the visit and place-state write endpoints (15).
 - Sign-in identity deletion mechanism (18).
-- Where unfinished tester-readiness work and the Fly.io deployment fall in the new milestone order (19).
-- What "active user" means for the North Star (14); initial dish preferences (20); repetition (21); whether a new variant counts toward the North Star (22); what happens when nothing is eligible (23).
-- **Planned schema details (24):** how variants are stored relative to dishes (D040); how a system-superseded proposal and its reason are recorded, distinct from `proposal_responses` (D037); whether appended corrections live on `dish_experience` or in a separate event structure (D038); whether dish proposals keep filling `place_id` and `cuisine_id` or those columns become nullable.
+- What "active user" means for the North Star (14); initial dish preferences (20); repetition (21); what happens when nothing is eligible (23).
+- **Planned schema details (24; the variant part is answered by D046):** how a system-superseded proposal and its reason are recorded, distinct from `proposal_responses` (D037); whether appended corrections live on `dish_experience` or in a separate event structure (D038); whether dish proposals keep filling `place_id` and `cuisine_id` or those columns become nullable.
 - **Offerings and purged content (25):** what happens to a published `dish_offering` when the provider content behind it expires or is purged, and which data class an offering belongs to (D034).

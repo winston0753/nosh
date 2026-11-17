@@ -1,7 +1,7 @@
 # Nosh Recommendation System
 
 - **Status:** Dish policy accepted (not implemented). The code runs `policy_v0`, the restaurant policy (Appendix A)
-- **Last updated:** 2026-11-10
+- **Last updated:** 2026-11-17
 
 > **Read this first.**
 >
@@ -12,6 +12,8 @@
 > The dish policy has no version name yet. This document does not invent one.
 
 ## 1. Objective
+
+**For the San Mateo pilot (D044):** the promise is one specific dish at a nearby restaurant worth saying yes to. The main behavioural measure is **confirmed first-pick meals**: how often the user eats the first dish suggested, familiar or new, and whether they still do in week two. Discovery, below, is measured separately. Whether the first-pick measure is the right one is an assumption the pilot tests.
 
 The North Star is **confirmed personally-new dishes tried per active user** (D033). "Personally new" means new to that user, not new to the world.
 
@@ -26,11 +28,13 @@ What counts as an "active user" is open (DECISIONS.md open question 14).
 
 ## 2. Terms
 
-- **Dish:** an entry in Nosh's own catalog, such as a named dish people order (D040).
-- **Variant:** a version of a dish that eats differently: a regional style, a different main protein, or a different preparation. Variants are one level deep (D040).
-- **Alias:** another name for the same dish or variant. It has no ID of its own (D040).
+- **Dish:** an entry in Nosh's own catalog, such as a named dish people order, with a permanent ID (D040). There is no separate variant level (D046): a version that eats differently is its own dish, told apart by a qualifier in its name ("Thai fried rice", "Yangzhou fried rice") or by its own name ("nasi goreng").
+- **Home country:** the one country a dish counts as coming from, for unlocks: where the dish, as named, was created. For a fusion dish it is where the fusion was created (miso carbonara → Japan) (D046).
+- **Cuisine tags:** one or more cuisines a dish belongs to (miso carbonara: Japanese and Italian). They never unlock anything (D039, D046).
+- **Base dish:** an optional link from a dish to one other dish it is a version of (miso carbonara → carbonara). Used only for ranking similarity; it never affects novelty or rewards (D046).
+- **Alias:** another name for the same dish. It has no ID of its own (D040).
 - **Branch:** one physical location of a restaurant.
-- **Offering:** a dish (or variant) offered at a specific branch, backed by menu evidence.
+- **Offering:** a dish offered at a specific branch, backed by menu evidence.
 - **Published offering:** an offering that has passed Nosh's offline pipeline and review (D034). Only published offerings can be suggested.
 - **Dish experience:** the record that a user actually ate a dish, confirmed after the meal (D038).
 - **Session:** one decision opportunity for one user and one meal window. There is still one session per user and meal window (D037).
@@ -49,7 +53,7 @@ The policy picks **one specific dish at one specific restaurant branch** (D032).
 
 - **Only published offerings** (D034). The index is built offline: sources → adapters → branch match → source-backed menu items → mapping to the dish catalog → review → published offering. Meal-time ranking never reads raw provider content directly.
 - **Live place status and opening hours, as a separate eligibility input** (D034). They can make an offering ineligible right now (for example, the branch is closed). They never prove that a restaurant serves a dish. Which provider supplies them is open (open question 4).
-- **The shared catalog** for facts about dishes, including cuisine (D040). Cuisine comes from the catalog, not from place types.
+- **The shared catalog** for facts about dishes, including cuisine tags (D040, D046). Cuisine comes from the catalog, not from place types. The optional base-dish link may be used to judge how similar two dishes are (D046); how it feeds the familiar, adjacent, and broader kinds of suggestion is part of open question 6.
 - **The user's own data:** preferences, explicit constraints, the meal area (D035), and their dish experiences.
 
 ### 3.3 Eligibility rules that are decided
@@ -71,12 +75,13 @@ Suggestions come in three kinds (D032):
 
 When the user's recent experience is concentrated (for example, mostly one cuisine), the policy **widens toward other culinary regions**. It never does this by breaking an explicit constraint.
 
-The balance between the three kinds, how "concentrated" is measured, and how fast the policy widens are **open** (open question 6).
+The balance between the three kinds, how "concentrated" is measured, and how fast the policy widens are **open** (open question 6). The balance is left open on purpose until the pilot shows what brings people back (D044).
 
 ### 3.5 What the policy learns from
 
 - **Taste evidence comes from dish experiences** (D038). It is derived from the experience history each time it is needed, not stored separately as the source of truth. That means it can always be recomputed.
 - **Tried and enjoyed are separate signals** (D033, D038). A dish can be tried and not enjoyed.
+- **Novelty is per dish ID** (D046). A newly named version of a dish the user knows (miso carbonara after carbonara) is a different dish, so it is personally new. The base-dish link does not change that.
 - **Corrections are appended as new events** (D038). If the user changes which dish they ate, both the old and the new dish are re-evaluated. If the user retracts an experience, it stops counting.
 - **"Been here" keeps its meaning** (the user had been to that restaurant before Nosh) but is **a familiarity signal only** (D036). It no longer removes the restaurant from suggestions.
 - **Old restaurant data is frozen history** (D036). Restaurant visits and place states recorded before the pivot are kept, read-only. They are not turned into dish experiences.
@@ -105,7 +110,7 @@ These session rules affect what the policy may do (D037):
 
 ### 4.1 For the future dish policy
 
-**Offline LLM tasks.** Catalog generation and menu mapping each need their own evaluation set before their output is trusted (D041). Who reviews generated facts, the evaluation sets, and their pass marks are open (open question 17). The D042 source experiment separately measures mapping accuracy, branch correctness, and freshness for each candidate source.
+**Offline LLM tasks.** Catalog generation and menu mapping each need their own evaluation set before their output is trusted (D041). For now the owner reviews generated facts by hand; a later workflow of offline review agents, each with its own evaluation set, is planned but not designed (D047). The evaluation sets and their pass marks are open (open question 17). The D042 source experiment separately measures mapping accuracy, branch correctness, and freshness for each candidate source.
 
 **Human-labeled checks.** Build a small review set of representative users, meal areas, and constraints with the offerings that should and should not be eligible. Check that:
 
@@ -120,7 +125,8 @@ These session rules affect what the policy may do (D037):
 
 **Online observation** (no automated A/B testing in phase one). Track by policy version:
 
-- confirmed personally-new dishes tried (the North Star);
+- confirmed first-pick meals, in week one and week two (the pilot's main measure, D044);
+- confirmed personally-new dishes tried (the discovery measure, D033);
 - enjoyment rate (the guardrail);
 - the mix of familiar, adjacent, and broader suggestions shown and accepted;
 - Go rate, Another per session, and confirmation rate;
@@ -128,7 +134,7 @@ These session rules affect what the policy may do (D037):
 - no-candidate rate;
 - notification disable rate.
 
-Do not promote a policy because it raises Go taps if it lowers confirmed new dishes or enjoyment, or raises notification disabling.
+Do not promote a policy because it raises Go taps if it lowers confirmed first-pick meals, confirmed new dishes, or enjoyment, or raises notification disabling.
 
 **Tests to write when the dish policy is built.** These follow directly from accepted decisions:
 
@@ -141,7 +147,8 @@ Do not promote a policy because it raises Go taps if it lowers confirmed new dis
 - every proposal records its policy version;
 - a system replacement is never recorded as a user response;
 - duplicate events do not count twice;
-- changing "enjoyed" never changes novelty or a reward.
+- changing "enjoyed" never changes novelty or a reward;
+- a dish linked to a base dish the user has had is still personally new, and the link never changes a reward (D046).
 
 ### 4.2 The existing simulator
 
@@ -159,11 +166,11 @@ These are **not decided**. Do not build on an assumed answer. The canonical list
 - **Live place status and opening hours (open question 4).** Which provider supplies them, and what its terms require of the card.
 - **"I ate something else" (open question 13).** How the user picks the actual dish at confirmation, and what happens when it is not in the catalog.
 - **Active user (open question 14).** The period that defines "active" for the North Star, and any target values.
-- **Catalog process (open question 17).** Who reviews generated facts, the evaluation sets and their pass marks, and how catalog versions are numbered.
+- **Catalog process (open question 17).** The evaluation sets and their pass marks, how catalog versions are numbered, and the design of the later agent review workflow. (Who reviews is answered by D047: the owner, for now.)
+- **Generic menu lines (remainder of open question 1).** How a menu line that names only a generic dish ("fried rice") is mapped when several qualified dishes exist. Nothing is guessed (D040).
 
 - **Initial dish preferences (open question 20).** How onboarding answers shape suggestions for a new user with no dish experiences.
 - **Repetition (open question 21).** Whether the same dish, or the same branch, may be proposed again within a session or in back-to-back meal windows.
-- **Variants and the North Star (open question 22).** Whether trying a new variant of a dish the user has already had counts as a personally-new dish. (D039 gives a new variant a journal entry, but does not say whether it counts toward D033.)
 - **Nothing eligible (open question 23).** What the user sees when no published offering is eligible, and whether any rule may be relaxed (explicit constraints may not).
 
 The dish policy's version name, formulas, and any numeric thresholds are also undecided.

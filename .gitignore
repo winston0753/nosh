@@ -29,3 +29,15 @@ build/
 
 # Claude Code agent-local memory — not for public repository
 memory/
+
+# Local working material — kept on disk, not in the repository
+# Pilot crawl data (generated, unreviewed third-party menu content)
+/data/pilot/
+# Personal research reports and notes
+/reports/
+/research_notes/
+# Third-party agent skills installed locally
+/.agents/
+/skills-lock.json
+# Claude Code per-user settings (project skills in .claude/skills/ are committed)
+.claude/settings.local.json

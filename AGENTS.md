@@ -26,9 +26,9 @@ Read these before changing code:
 
 Root documents are canonical. Files under `docs/` are historical research. `DECISIONS.md` explains how to read each decision's status line (Implemented, Accepted (not implemented), Proposed, Superseded, Amended).
 
-## Current state (as of 2026-11-10)
+## Current state (as of 2026-11-17)
 
-`main` is at `8422298`. PRs #1–#6 are merged; no open PRs are known. The local foundation works end to end for restaurants. It is **not** ready for TestFlight or external testers. Start with "Where the last session left off" in `IMPLEMENTATION_HANDOFF.md`.
+`main` is at `ec69a9e`. PRs #1–#7 are merged (PR #7 was the pivot documents); a follow-up docs PR (D044–D048) comes from branch `docs/dish-first-pivot`. The local foundation works end to end for restaurants. It is **not** ready for TestFlight or external testers. Start with "Where the last session left off" in `IMPLEMENTATION_HANDOFF.md`.
 
 This section has three separate parts. Keep them separate when you write about the project.
 
@@ -45,9 +45,9 @@ This section has three separate parts. Keep them separate when you write about t
 
 Still decided and unchanged: bundle identifier `com.winstontang.nosh` (D029); Fly.io with Supabase Postgres (D030, not deployed); private cohort (D009); no background location (D010; D017 as amended by D035).
 
-### 2. Accepted but not implemented (the dish-first pivot, 2026-11-10)
+### 2. Accepted but not implemented (the dish-first pivot, 2026-11-10, with additions to 2026-11-17)
 
-Two parts are not yet agreed: the budget (D043 is open) and the one-home-country rule in D039 (proposed).
+Not yet agreed: the budget (D043 is open) and text messages as a channel (D045, proposed and set aside).
 
 - **D032 — Unit:** one dish at one restaurant branch, suggested proactively on the meal schedule.
 - **D033 — North Star:** confirmed personally-new dishes tried per active user. "Tried" and "enjoyed" are separate signals; enjoyment rate is a guardrail.
@@ -56,22 +56,27 @@ Two parts are not yet agreed: the budget (D043 is open) and the one-home-country
 - **D036 — Legacy data:** restaurant visits and place states become read-only history. No dish backfill, no retrospective rewards. "Been here" becomes a familiarity signal only.
 - **D037 — Sessions:** Go is final for the window. The system may supersede only unanswered proposals, recorded separately from user responses. An accepted proposal is never silently replaced.
 - **D038 — Confirmation:** one commit per request; confirming a meal writes the dish experience, checks novelty under a per-user lock, and inserts rewards idempotently. Corrections are appended events.
-- **D039 — Rewards:** a cosmetic unlocks only for a dish from a country new to the user; the avatar is computed from valid rewards. The one-home-country-per-dish rule is **Proposed, awaiting confirmation** — do not build on it.
-- **D040 — Catalog identity:** dish, variant (one level), alias. Only dishes and variants have IDs, and IDs are permanent. Every fact is marked generated, reviewed, or source-backed.
+- **D039 — Rewards:** a cosmetic unlocks only for a dish from a country new to the user; the avatar is computed from valid rewards. Its one-home-country-per-dish rule is now accepted (D046).
+- **D040 — Catalog identity:** dishes with permanent IDs, and aliases (names only, no IDs). Every fact is marked generated, reviewed, or source-backed. Amended by D046: no separate variant level.
 - **D041 — LLM boundary:** LLMs offline only, each use with its own evaluation set. No LLM call at meal time.
 - **D042 — Pilot:** downtown San Mateo is the first hand-verified offering index. A source-comparison experiment runs in parallel; no source is selected.
 - **D043 — Budget:** open. No figure is agreed.
+- **D044 — Pilot promise and measures (2026-11-12):** "When lunch crosses your mind, Nosh already has one specific dish at a nearby restaurant worth saying yes to." The pick is ready before the notification. The pilot's main measure is confirmed first-pick meals, including week two; D033 stays as the separate discovery measure. No recurring questions beyond the after-meal confirmation. The 15-minute nudge timing and the familiar/new balance are hypotheses or open, not agreed facts.
+- **D045 — Text messages (2026-11-16):** SMS as a second delivery channel. **Proposed and set aside by the owner** — do not build on it.
+- **D046 — Catalog shape (2026-11-17):** each dish has exactly one home country (where the dish, as named, was created; for a fusion dish, where the fusion was created). Versions cooked differently are separate dishes with qualified names ("Thai fried rice"). Several cuisine tags per dish, which never unlock anything. No variant level; an optional link to one base dish is used only for ranking similarity, never for novelty or rewards. Still open: how a menu line naming only a generic dish is mapped (open question 1).
+- **D047 — Catalog review (2026-11-17):** the owner reviews catalog discrepancies by hand for now; a later workflow of offline review agents is planned but not designed.
+- **D048 — Tester readiness (2026-11-17):** no general offline write queue. Milestone 5 saves and retries an unsent after-meal confirmation; Milestone 6 has the EAS/TestFlight build and the Fly.io deployment. The owner makes real icons before the first TestFlight build.
 
 ### 3. Historical or superseded
 
 Kept as history only; do not build on them:
 
 - D002 (restaurant North Star), D021 (Google Places end to end), D022 (store only provider IDs, except its rule about Google content), D023 (location-free nudges, except as the no-meal-area fallback), D024 (`policy_v1`, never built), D027 (curated-catalog retirement), D028 (~$50/month budget), and D031 (cuisine labels from place types, never built). Older entries such as D007, D008, D010, and D016 are also partly replaced; `DECISIONS.md` status lines are the full record.
-- The old Milestone 3 ("Expo vertical slice") and Milestone 4 ("Notifications and private cohort readiness") plan. Its unfinished tester-readiness items (offline write queue, EAS/TestFlight build, real icons) and the Fly.io deployment have no agreed place in the new order yet (DECISIONS.md open question 19).
+- The old Milestone 3 ("Expo vertical slice") and Milestone 4 ("Notifications and private cohort readiness") plan. Its unfinished tester-readiness items and the Fly.io deployment are now placed by D048 (Milestones 5 and 6); the general offline write queue is dropped.
 
 ## Next: the dish-first milestones
 
-All seven are **not started**. See `IMPLEMENTATION_HANDOFF.md` for detail.
+All seven are **not started**. They are an ordered queue; Milestone 1 is next. See `IMPLEMENTATION_HANDOFF.md` for detail.
 
 1. Catalog schema, identity rules, seed, evaluation set.
 2. Branch and offering tables with the San Mateo hand-verified index; source experiment in parallel.
@@ -80,6 +85,8 @@ All seven are **not started**. See `IMPLEMENTATION_HANDOFF.md` for detail.
 5. Single-commit refactor, dish experience, rewards.
 6. Notification worker and meal area.
 7. Minimal journal and avatar.
+
+Queued after Milestone 1: design the agent catalog-review workflow (D047; not designed). Milestone 5 includes the stored, retried confirmation and Milestone 6 the TestFlight build and Fly.io deployment (D048).
 
 First target: one complete loop — dish onboarding → dish-and-restaurant recommendation → scheduled delivery → actual-dish confirmation → immediate discovery reward → updated profile and minimal avatar/journal.
 
@@ -102,6 +109,7 @@ Rules about unbuilt behaviour are rules for future work. They do not describe th
 - Tried and enjoyed are separate signals. Only confirmed personally-new dishes count toward the North Star (D033).
 - One commit per request. Corrections are appended events, never overwrites. Rewards are inserted idempotently (D038).
 - A cosmetic unlocks only for a new country, and the avatar is computed from valid rewards (D039).
+- Each dish has exactly one home country; cuisine tags never unlock. There is no variant level: a version that eats differently is its own dish, and a base-dish link never affects novelty or rewards (D046).
 - Catalog IDs are permanent (D040).
 - Legacy restaurant visits and place states are read-only history: no dish backfill and no retrospective rewards (D036).
 - The meal area is a coarse cell, never a point. No background location (D035, D010).
